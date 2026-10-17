@@ -1,0 +1,4 @@
+- insert:
+    - id: performance
+      name: dsh-performance
+      config: {}
