@@ -13,6 +13,8 @@ const MB = 1024 ** 2, GB = 1024 ** 3;
 const CPU_STEPS = [2, 5, 10, 15, 20, 25, 30, 40, 50, 60, 80, 100];
 /** Programs that ran at least this long draw as lifetime bars; shorter ones, such as single commands, as ticks below them. */
 const LONG_MS = 60_000;
+/** The tooltip names the Host's busiest owners at the moment, down to this share of the machine. */
+const OWNER_SHOWN = .05;
 const MEMORY_STEPS = [.25, .5, .75, 1, 1.5, 2, 3, 4, 6, 8, 12, 16, 24, 32, 48, 64].map(n => n * GB);
 const MS_STEPS = [100, 200, 300, 500, 1000, 2000, 5000, 10_000, 30_000];
 const MINUTE_STEPS = [1, 2, 5, 10, 15, 30].map(n => n * 60_000);
@@ -79,8 +81,8 @@ function Figure({ text }: { text: string }) {
   return parts ? <>{parts[1]}{parts[2] && <small>{parts[2]}</small>}</> : <>{text}</>;
 }
 
-export const Timeline = memo(function Timeline({ points, response, programs, start, end, onFocus }: {
-  points: Point[]; response: ResponseLog; programs: readonly ProgramRecord[]; start: number; end: number; onFocus(group: Group | null): void;
+export const Timeline = memo(function Timeline({ points, response, programs, start, end, ownerName, onFocus }: {
+  points: Point[]; response: ResponseLog; programs: readonly ProgramRecord[]; start: number; end: number; ownerName(id: string): string; onFocus(group: Group | null): void;
 }) {
   const canvas = useRef<HTMLDivElement>(null), id = useId(), [width, setWidth] = useState(0);
   // While a moment is inspected, the window holds still, so the inspected moment does not slide away.
@@ -136,6 +138,8 @@ export const Timeline = memo(function Timeline({ points, response, programs, sta
   const peek = (time: number | null) => { if (time === null) { setHeld(null); setAt(null); return; } setHeld(current => current ?? { start, end }); setAt(time); };
   const values = (field: 'cpu' | 'memory', g: number) => { const v = pick?.[field]; return v ? (field === 'cpu' ? cpu(v[g]) : bytes(v[g])) : '—'; };
   const total = (field: 'cpu' | 'memory') => { const v = pick?.[field]; return v ? (field === 'cpu' ? cpu(sum(v)) : bytes(sum(v))) : '—'; };
+  // Under the Host's row: who ran on its main thread at that moment (its other threads, such as I/O, are not split).
+  const owners = pick?.owners ? Object.entries(pick.owners).filter(([, v]) => v >= OWNER_SHOWN).sort((a, b) => b[1] - a[1]).slice(0, 3) : [];
   const respond = rs.observedMs ? rs.frames ? `${rs.frames} 次卡顿` : '流畅' : '—';
   const label = pick ? `${clock(pick.time)}，CPU ${total('cpu')}，内存 ${total('memory')}` : '最新读数';
 
@@ -240,7 +244,11 @@ export const Timeline = memo(function Timeline({ points, response, programs, sta
           <time>{clock(pick?.time ?? at!)}</time>
           {pick && <table>
             <thead><tr><th /><th>CPU</th><th>内存</th></tr></thead>
-            <tbody>{[...GROUPS].reverse().map(g => { const i = GROUPS.indexOf(g); return <tr key={g} data-group={g}><th><i />{GROUP_LABEL[g]}</th><td>{values('cpu', i)}</td><td>{values('memory', i)}</td></tr>; })}</tbody>
+            <tbody>{[...GROUPS].reverse().map(g => { const i = GROUPS.indexOf(g); return <React.Fragment key={g}>
+              <tr data-group={g}><th><i />{GROUP_LABEL[g]}</th><td>{values('cpu', i)}</td><td>{values('memory', i)}</td></tr>
+              {g === 'host' && owners.length > 0 && <tr className="dpm-tip-owner-head"><th colSpan={3}>其中主线程</th></tr>}
+              {g === 'host' && owners.map(([id, v]) => <tr key={id} className="dpm-tip-owner"><th>{ownerName(id)}</th><td>{cpu(v)}</td><td /></tr>)}
+            </React.Fragment>; })}</tbody>
             <tfoot>
               <tr><th>DSH 合计</th><td>{total('cpu')}</td><td>{total('memory')}</td></tr>
               {(pick.systemCpu !== null || pick.systemMemory !== null) && <tr className="dpm-tip-machine"><th>整机</th><td>{cpu(pick.systemCpu)}</td><td>{bytes(pick.systemMemory)}</td></tr>}

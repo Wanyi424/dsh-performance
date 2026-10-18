@@ -4,7 +4,7 @@ import { build } from 'esbuild';
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { chromium, type Page } from 'playwright';
 import assert from 'node:assert/strict';
-import type { Analysis, AnalysisState, ProcessMetric, Sample } from '../src/contracts';
+import type { Attribution, OwnerDetail, ProcessMetric, Sample } from '../src/contracts';
 await mkdir('artifacts', { recursive: true });
 await build({ entryPoints: ['tests/browser-entry.tsx'], outfile: 'artifacts/browser-entry.js', bundle: true, platform: 'browser', format: 'iife', define: { 'process.env.NODE_ENV': '"production"' }, logLevel: 'error' });
 const theme = JSON.parse(await readFile('tests/themes.json', 'utf8'));
@@ -35,30 +35,35 @@ function sample(): Sample {
   ];
   const cpu = processes.reduce((a, p) => a + p.cpu!, 0), memory = processes.reduce((a, p) => a + p.memory!, 0);
   return { time: clock ?? Date.now(), intervalMs: 2000, cores: 16, started: Date.now() - 7_380_000, unavailable: 0, collector: { pid: 300, cpu: .04, memory: 5 * MB },
-    system: { cpu: Math.min(100, cpu + 18 + drift * 5 + noise(n, 9) * 4), memoryUsed: 9.4 * 1024 ** 3 + memory - 1000 * MB, memoryTotal: 15.9 * 1024 ** 3 }, cpu, memory, processes };
+    system: { cpu: Math.min(100, cpu + 18 + drift * 5 + noise(n, 9) * 4), memoryUsed: 9.4 * 1024 ** 3 + memory - 1000 * MB, memoryTotal: 15.9 * 1024 ** 3 }, cpu, memory, processes,
+    attribution: split(n, agent) };
 }
-// The Host's analysis, scripted: it runs for three polls, then reports a result.
+// The Host's own split of its main thread: the notes plugin re-renders in bursts, the agent's work is DSH's, the monitor costs
+// a little on every reading. Memory is read every 150 readings (5 minutes); the notes plugin's grows a little each time.
+let read: Attribution['memory'] = null;
+function split(n: number, agent: number): Attribution {
+  if (n >= 30 && (n - 30) % 150 === 0) {
+    const k = (n - 30) / 150;
+    read = { at: clock ?? Date.now(), pauseMs: 84, owners: { 'plugin:dsh-quick-translate': .2 * MB, 'plugin:dsh-markdown-notes': (6 + k * 1.5) * MB, 'plugin:dsh-performance': 1.2 * MB,
+      'plugin:dsh-context': 3.1 * MB, core: 48 * MB, gc: 0, other: 6.4 * MB } };
+  }
+  const notes = n % 50 < 8 ? .5 + noise(n, 11) * .4 : 0;
+  return { startPauseMs: 286, error: null, memory: read, cpu: n === 0 ? null : { 'plugin:dsh-quick-translate': 0, 'plugin:dsh-markdown-notes': notes,
+    'plugin:dsh-performance': .03 + noise(n, 12) * .02, 'plugin:dsh-context': .01 + agent * .01, core: .08 + agent * .12, gc: .02 + agent * .02, other: .01 } };
+}
 const PLUGINS = [{ id: 'dsh-quick-translate', label: '快捷翻译', version: '0.2.4' }, { id: 'dsh-markdown-notes', label: 'Markdown 笔记', version: '0.5.2' },
-  { id: 'dsh-performance', label: '运行监控', version: '0.4.0' }, { id: 'dsh-context', label: '上下文 (dsh-context)', version: '0.71.0' }];
-let analysis: AnalysisState = { state: 'idle' }, polls = 0;
+  { id: 'dsh-performance', label: '运行监控', version: '0.6.1' }, { id: 'dsh-context', label: '上下文 (dsh-context)', version: '0.71.0' }];
 const hot = (name: string, where: string, value: number) => ({ name, where, value });
-const RESULT: Analysis = { durationMs: 30_000, busyMs: 5_400, memory: 12.4 * MB, owners: [
-  { id: 'plugin:dsh-performance', kind: 'plugin', label: '运行监控', cpuMs: 1_240, memory: 2.1 * MB, functions: [hot('calculate', 'lib/host.js:212', 610), hot('collect', 'lib/host.js:118', 402), hot('handler', 'lib/host.js:388', 228)], allocations: [hot('calculate', 'lib/host.js:212', 1.6 * MB), hot('parse', 'lib/host.js:131', .5 * MB)] },
-  { id: 'plugin:dsh-markdown-notes', kind: 'plugin', label: 'Markdown 笔记', cpuMs: 380, memory: 4.2 * MB, functions: [hot('renderMarkdown', 'lib/host.js:1040', 300), hot('watch', 'lib/host.js:77', 80)], allocations: [hot('renderMarkdown', 'lib/host.js:1040', 4.2 * MB)] },
-  { id: 'plugin:dsh-context', kind: 'plugin', label: '上下文 (dsh-context)', cpuMs: 90, memory: .3 * MB, functions: [hot('（匿名函数）', 'lib/index.js:9', 90)], allocations: [] },
-  { id: 'plugin:dsh-quick-translate', kind: 'plugin', label: '快捷翻译', cpuMs: 0, memory: 0, functions: [], allocations: [] },
-  { id: 'core', kind: 'core', label: 'DSH 内核', cpuMs: 3_010, memory: 5.8 * MB, functions: [], allocations: [], modules: [
-    { name: '@deepseek-ai/dsh-agent-loop', cpuMs: 1_300, memory: 2.2 * MB }, { name: '@deepseek-ai/dsh-session', cpuMs: 820, memory: 1.9 * MB }, { name: 'Node.js', cpuMs: 610, memory: 0 }] },
-  { id: 'gc', kind: 'gc', label: '垃圾回收', cpuMs: 560, memory: 0, functions: [], allocations: [] },
-  { id: 'other', kind: 'other', label: '其他', cpuMs: 120, memory: 0, functions: [], allocations: [], modules: [{ name: '原生代码', cpuMs: 120, memory: 0 }] },
-] };
-function answer(body: { action: string; seconds?: number }) {
+const DETAIL: Record<string, OwnerDetail> = {
+  'plugin:dsh-markdown-notes': { cpu: [hot('renderMarkdown', 'lib/host.js:1040', 2_400), hot('watch', 'lib/host.js:77', 310)], memory: [hot('renderMarkdown', 'lib/host.js:1040', 5.2 * MB), hot('remember', 'lib/host.js:212', 1.1 * MB)], memoryAt: null },
+  'plugin:dsh-performance': { cpu: [hot('take', 'lib/host.js:612', 820), hot('calculate', 'lib/host.js:212', 610), hot('handler', 'lib/host.js:388', 228)], memory: [hot('bank', 'lib/host.js:655', .8 * MB)], memoryAt: null },
+  core: { cpu: [hot('@deepseek-ai/dsh-agent-loop', '', 5_200), hot('@deepseek-ai/dsh-session', '', 1_900), hot('Node.js', '', 700)], memory: [hot('@deepseek-ai/dsh-session', '', 30 * MB)], memoryAt: null },
+};
+function answer(body: { action: string; id?: string }) {
   if (body.action === 'sample') { calls++; return fail ? null : sample(); }
   if (body.action === 'plugins') return PLUGINS;
-  if (body.action === 'analyze') { analysis = { state: 'running', startedAt: clock ?? Date.now(), seconds: body.seconds! }; polls = 0; return analysis; }
-  if (body.action === 'cancel') { analysis = { state: 'idle' }; return analysis; }
-  if (analysis.state === 'running' && ++polls >= 3) analysis = { state: 'done', startedAt: analysis.startedAt, seconds: analysis.seconds, result: RESULT };
-  return analysis;
+  if (body.action === 'owner') return { ...DETAIL[body.id!] ?? { cpu: [], memory: [] }, memoryAt: read?.at ?? null };
+  return null;
 }
 async function serve(page: Page) {
   await page.route('**/*', async route => {
@@ -128,7 +133,7 @@ try {
   await page.getByRole('button', { name: /已退出/ }).click();
   assert.ok(await page.locator('tr[data-ended]').count() >= 1, 'ended programs listed');
   await page.getByRole('button', { name: /^CPU/ }).click();
-  assert.equal(await page.locator('th[aria-sort="descending"]').innerText(), 'CPU');
+  assert.equal(await page.locator('[aria-labelledby="dpm-processes-title"] th[aria-sort="descending"]').innerText(), 'CPU');
 
   await page.locator('.dpm-scroll').evaluate(el => { el.scrollTop = 0; });
   await page.mouse.move(0, 0);
@@ -140,7 +145,7 @@ try {
   const canvas = await page.locator('.dpm-canvas').boundingBox();
   await page.mouse.move(canvas!.x + canvas!.width * .62, canvas!.y + 70);
   await page.locator('.dpm-tip').waitFor();
-  assert.match(await page.locator('.dpm-tip').innerText(), /DSH 合计[\s\S]*整机/);
+  assert.match(await page.locator('.dpm-tip').innerText(), /后台服务[\s\S]*其中主线程[\s\S]*DSH 内核[\s\S]*DSH 合计[\s\S]*整机/, 'the tooltip splits the Host\'s main thread');
   await page.screenshot({ animations: 'disabled', path: 'artifacts/light.png', fullPage: false });
   await page.locator('.dpm-scroll').evaluate(el => { el.scrollTop = el.scrollHeight; });
   await page.mouse.move(0, 0);
@@ -154,27 +159,32 @@ try {
   await page.screenshot({ animations: 'disabled', path: 'artifacts/sheet.png' });
   await page.keyboard.press('Escape'); await page.clock.runFor(500); await sheet.waitFor({ state: 'hidden' });
 
-  // Plugins: helpers are live; an analysis runs, then charges the Host's time and memory to each plugin.
+  // Plugins: each reading splits the Host's main thread by plugin; memory comes from the latest reading; helpers are live.
   const plugins = page.locator('.dpm-plugins');
   await plugins.scrollIntoViewIfNeeded();
-  assert.equal(await plugins.locator('tbody tr[data-kind]').count(), 4);
+  assert.equal(await plugins.locator('tbody tr[data-group]').count(), 7, 'four plugins, then DSH, garbage collection and the rest');
+  assert.match(await plugins.locator('.dpm-plugins-meta').innerText(), /后台主线程平均占整机 [\d.]+%：插件 [\d.<]+%[\s\S]*内存 \d\d:\d\d 读取/);
+  assert.equal(await plugins.locator('tbody tr[data-group]').first().locator('strong').innerText(), 'Markdown 笔记', 'plugins ordered by their average');
   assert.match(await plugins.locator('tr', { hasText: '运行监控' }).innerText(), /<0\.1% · 5 MB/, 'the collector shows as this plugin\'s helper');
   assert.match(await plugins.locator('tr', { hasText: '上下文' }).innerText(), /MB/, 'a helper from a plugin\'s folder belongs to that plugin');
+  assert.match(await plugins.locator('tr', { hasText: 'Markdown 笔记' }).innerText(), /\t(?:[7-9]|1\d) MB\t/, 'memory from the latest reading, grown past the first (6 MB)');
   assert.match(await page.locator('.dpm-name', { hasText: 'Context-indexer' }).innerText(), /插件「上下文 \(dsh-context\)」的程序/);
-  await plugins.getByRole('button', { name: '开始分析' }).click();
-  await plugins.locator('.dpm-progress').waitFor();
-  assert.match(await plugins.locator('.dpm-plugins-clock').innerText(), /正在分析/);
-  for (let i = 0; i < 4; i++) await page.clock.runFor(1000);
-  await plugins.getByRole('button', { name: '重新分析' }).waitFor();
-  assert.match(await plugins.locator('.dpm-plugins-meta').innerText(), /后台主线程忙了 5\.4 秒（18%）/);
-  assert.equal(await plugins.locator('tbody tr[data-kind]').first().locator('strong').innerText(), '运行监控', 'plugins ordered by their share');
-  await plugins.getByRole('button', { name: /展开运行监控/ }).click();
-  assert.match(await plugins.locator('.dpm-plugin-detail').innerText(), /calculate[\s\S]*lib\/host\.js:212/);
-  await plugins.getByRole('button', { name: /展开DSH 内核/ }).click();
+  assert.ok(await plugins.locator('.dpm-spark-line').count() >= 3, 'owner trends drawn');
+  await plugins.locator('.dpm-name', { hasText: 'Markdown 笔记' }).hover();
+  assert.equal(await page.locator('.dpm-root').getAttribute('data-focus'), 'host', 'a plugin row lifts the Host in the charts');
+  await page.mouse.move(0, 0);
   await page.clock.runFor(300);
   await plugins.screenshot({ animations: 'disabled', path: 'artifacts/plugins.png' });
+  await plugins.locator('.dpm-name', { hasText: 'Markdown 笔记' }).click();
+  const owner = page.getByRole('dialog');
+  await owner.locator('.dpm-hot li').first().waitFor();
+  assert.match(await owner.innerText(), /最耗时的函数[\s\S]*renderMarkdown[\s\S]*lib\/host\.js:1040[\s\S]*2\.4 秒[\s\S]*占用内存最多的位置/);
+  await page.clock.runFor(500);
+  await page.screenshot({ animations: 'disabled', path: 'artifacts/owner.png' });
+  await page.keyboard.press('Escape'); await page.clock.runFor(500); await owner.waitFor({ state: 'hidden' });
 
   await page.getByRole('button', { name: '统计口径' }).click(); await page.getByRole('dialog').waitFor();
+  assert.match(await page.getByRole('dialog').innerText(), /本次启动时后台停顿 286 ms[\s\S]*最近一次后台停顿 84 ms/, 'the profiler\'s own pauses are told');
   await page.keyboard.press('Escape'); await page.clock.runFor(500); await page.getByRole('dialog').waitFor({ state: 'hidden' });
   await page.getByRole('button', { name: '1 小时', exact: true }).click();
   assert.equal(await page.getByRole('button', { name: '1 小时', exact: true }).getAttribute('aria-pressed'), 'true');
@@ -192,7 +202,7 @@ try {
   await page.screenshot({ animations: 'disabled', path: 'artifacts/narrow.png', fullPage: false });
   assert.equal(await page.locator('.dpm-scroll').evaluate(el => el.scrollWidth > el.clientWidth), false, 'no sideways scrolling at narrow width');
   assert.deepEqual(errors, []);
-  const report = { errors, pageLazyLoaded: true, entrySelectedState: true, machineShare: true, linkedTracks: true, programMarks: true, endedPrograms: true, pluginAnalysis: true, pluginHelpers: true,
+  const report = { errors, pageLazyLoaded: true, entrySelectedState: true, machineShare: true, linkedTracks: true, programMarks: true, endedPrograms: true, pluginAttribution: true, ownerSheet: true, pluginHelpers: true,
     sideSheet: true, sorting: true, visibilityPause: true, errorAndRetry: true, collapsedSidebar: true, narrowOverflow: false, taskProbe, statisticsProbe,
     data: 'scripted collector readings; actual built client; real Chromium long frames and a real slow click; accelerated clock for the trend' };
   await writeFile('artifacts/browser-check.json', JSON.stringify(report, null, 2)); console.log(report);

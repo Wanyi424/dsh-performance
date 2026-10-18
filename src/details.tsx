@@ -9,7 +9,7 @@ import type { Series, Tracked } from './tracking';
 import { Dialog, copyText } from './ui';
 
 /** Statistics of one series inside the range; CPU is the mean of the 15-second buckets. */
-function stats(series: Series | undefined, start: number) {
+export function stats(series: Series | undefined, start: number) {
   if (!series) return { averageCpu: null, peakCpu: null, peakMemory: null, memoryChange: null };
   const from = firstTime(series.times, start);
   const cpus = series.cpu.slice(from).filter(v => !Number.isNaN(v)), memories = series.memory.slice(from).filter(v => !Number.isNaN(v));
@@ -20,14 +20,14 @@ function stats(series: Series | undefined, start: number) {
 }
 
 /** One series as a small area chart across the range, with the reading under the pointer. */
-function MiniChart({ series, field, start, end, group, label }: { series?: Series; field: 'cpu' | 'memory'; start: number; end: number; group: Group; label: string }) {
+export function MiniChart({ series, field, start, end, group, label, floor }: { series?: Series; field: 'cpu' | 'memory'; start: number; end: number; group: Group; label: string; floor?: number }) {
   const box = useRef<HTMLDivElement>(null), [width, setWidth] = useState(0), [at, setAt] = useState<number | null>(null);
   useLayoutEffect(() => {
     const el = box.current!; setWidth(el.clientWidth);
     const observer = new ResizeObserver(() => setWidth(el.clientWidth)); observer.observe(el);
     return () => observer.disconnect();
   }, []);
-  const height = 84, t = trend(series, field, start, end, width, height, 6), format = field === 'cpu' ? cpu : bytes;
+  const height = 84, t = trend(series, field, start, end, width, height, 6, floor), format = field === 'cpu' ? cpu : bytes;
   const index = at === null || !series ? -1 : (() => { const i = Math.min(firstTime(series.times, at), series.times.length - 1); return i > 0 && at - series.times[i - 1] < series.times[i] - at ? i - 1 : i; })();
   const value = index >= 0 ? series![field][index] : NaN, x = index >= 0 ? (series!.times[index] - start) / (end - start) * width : 0;
   return <figure className="dpm-mini">

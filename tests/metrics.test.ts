@@ -97,15 +97,16 @@ test('the machine share comes from the same interval: busy CPU and physical memo
   assert.equal(s.processes[0].threads, 4);
 });
 
-test('analysis actions: lengths are limited to the offered ones; the plugin list carries no paths', async () => {
-  const started: number[] = [];
-  const analyzer = { async start(seconds: number) { started.push(seconds); return { state: 'running' as const, startedAt: 1, seconds }; }, status: () => ({ state: 'idle' as const }), cancel: () => ({ state: 'idle' as const }) };
+test('the owner query takes an id and a range only; the plugin list carries no paths', async () => {
+  const asked: unknown[][] = [];
+  const profiler = { detail(id: string, from: number, to: number) { asked.push([id, from, to]); return { cpu: [{ name: 'render', where: 'lib/host.js:4', value: 12 }], memory: [], memoryAt: null }; } };
   const catalog = { async list() { return [{ id: 'dsh-a', label: 'A', version: '1.0.0', dir: '/secret/path' }]; } };
-  const handle = createHandler({ sampler: { async sample() { return calculate(raw()); } }, analyzer, catalog });
+  const handle = createHandler({ sampler: { async sample() { return calculate(raw()); } }, profiler, catalog });
   const post = async (body: unknown) => { const r = await handle(new Request('http://localhost/x', { method: 'POST', body: JSON.stringify(body) })); return { status: r.status, body: await r.json() }; };
-  assert.equal((await post({ action: 'analyze', seconds: 5 })).status, 400);
-  assert.equal((await post({ action: 'analyze', seconds: 30 })).body.data.state, 'running');
-  assert.deepEqual(started, [30]);
+  assert.equal((await post({ action: 'owner', id: 'plugin:dsh-a', from: 'yesterday', to: 1 })).status, 400);
+  assert.equal((await post({ action: 'owner', id: { pid: 1 }, from: 0, to: 1 })).status, 400);
+  assert.equal((await post({ action: 'owner', id: 'plugin:dsh-a', from: 0, to: 60_000 })).body.data.cpu[0].name, 'render');
+  assert.deepEqual(asked, [['plugin:dsh-a', 0, 60_000]]);
   assert.deepEqual((await post({ action: 'plugins' })).body.data, [{ id: 'dsh-a', label: 'A', version: '1.0.0' }]);
-  assert.equal((await post({ action: 'analysis' })).body.data.state, 'idle');
+  assert.equal((await post({ action: 'analyze', seconds: 30 })).status, 400, 'the on-demand analysis is gone');
 });

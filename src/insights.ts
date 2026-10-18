@@ -13,7 +13,7 @@ export function pointOf(s: Sample): Point {
     if (cpu && p.cpu !== null) cpu[i] += p.cpu;
     if (memory && p.memory !== null) memory[i] += p.memory;
   }
-  return { time: s.time, intervalMs: s.intervalMs, cpu, memory, systemCpu: s.system?.cpu ?? null, systemMemory: s.system?.memoryUsed ?? null };
+  return { time: s.time, intervalMs: s.intervalMs, cpu, memory, systemCpu: s.system?.cpu ?? null, systemMemory: s.system?.memoryUsed ?? null, owners: s.attribution?.cpu ?? null };
 }
 
 /**
@@ -74,6 +74,21 @@ export function summarize(points: Point[], start: number, end: number): Summary 
     averageCpu: weight ? weighted / weight : null, peakCpu, peakMemory, peakCpuAt, peakMemoryAt,
     memoryChange: first && last && first !== last ? sum(last.memory!) - sum(first.memory!) : null, since: first && first !== last ? first.time : null,
   };
+}
+
+/** Each owner's share of the machine over the range, time weighted like the CPU average; null before any split arrived. */
+export function ownerAverages(points: Point[], start: number, end: number): Record<string, number> | null {
+  const sums: Record<string, number> = {};
+  let weight = 0;
+  for (let i = firstAt(points, start); i < points.length && points[i].time <= end; i++) {
+    const p = points[i], ms = p.owners && p.intervalMs !== null ? p.time - Math.max(start, p.time - p.intervalMs) : 0;
+    if (ms <= 0) continue;
+    for (const id in p.owners) sums[id] = (sums[id] ?? 0) + p.owners![id] * ms;
+    weight += ms;
+  }
+  if (!weight) return null;
+  for (const id in sums) sums[id] /= weight;
+  return sums;
 }
 
 /** Interactions slower than this feel sluggish; the same line web vitals draw for a good INP. */

@@ -1,4 +1,4 @@
-import React, { memo, useRef, useState } from 'react';
+import React, { memo, useState } from 'react';
 import type { Group, PluginInfo, ProcessMetric, Sample } from './contracts';
 import { bytes, clockShort, cpu, span } from './format';
 import { ArrowDown, Chevron } from './icons';
@@ -6,17 +6,7 @@ import { byUsage, commandSummary, keyOf, programName, programs, type SortKey } f
 import { KIND } from './labels';
 import { Sparkline } from './spark';
 import type { ProgramRecord, Tracked } from './tracking';
-
-/**
- * Rows follow the chosen order on every reading, except while the pointer rests on the table: then they hold their places, so
- * the row about to be clicked does not move away. New rows join at the end until the pointer leaves.
- */
-function useSteadyOrder(keys: string[], held: boolean) {
-  const order = useRef<string[]>([]);
-  if (!held) order.current = keys;
-  else { const present = new Set(keys); order.current = [...order.current.filter(k => present.has(k)), ...keys.filter(k => !order.current.includes(k))]; }
-  return order.current;
-}
+import { useSteadyOrder } from './ui';
 
 interface Row { key: string; group: Group; name: string; note: string; title?: string; cpu: number | null; memory: number | null; ended?: ProgramRecord }
 function Usage({ value, total }: { value: number | null; total: number | null }) {

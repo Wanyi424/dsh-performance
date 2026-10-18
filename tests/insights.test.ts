@@ -1,10 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { commandSummary, decimate, pointOf, programName, programs, summarize, summarizeResponse } from '../src/insights';
+import { commandSummary, decimate, ownerAverages, pointOf, programName, programs, summarize, summarizeResponse } from '../src/insights';
 import type { Point, ProcessMetric, Sample } from '../src/contracts';
 
 const point = (time: number, cpu: number | null, memory: number, intervalMs: number | null = 2000): Point =>
-  ({ time, intervalMs: cpu === null ? null : intervalMs, cpu: cpu === null ? null : [cpu, 0, 0, 0, 0], memory: [memory, 0, 0, 0, 0], systemCpu: null, systemMemory: null });
+  ({ time, intervalMs: cpu === null ? null : intervalMs, cpu: cpu === null ? null : [cpu, 0, 0, 0, 0], memory: [memory, 0, 0, 0, 0], systemCpu: null, systemMemory: null, owners: null });
 const proc = (pid: number, parent: number, name: string, extra: Partial<ProcessMetric> = {}): ProcessMetric =>
   ({ pid, parent, created: pid, name, kind: 'tool', group: 'tools', threads: 1, detail: null, cpu: 1, memory: 10, ...extra });
 
@@ -13,8 +13,18 @@ test('history points keep per-group sums in chart order', () => {
     proc(1, 0, 'a', { kind: 'renderer', group: 'ui', cpu: 2, memory: 30 }), proc(2, 0, 'b', { kind: 'host', group: 'host', cpu: 1, memory: 20 }),
     proc(3, 2, 'c', { cpu: null, memory: 10 }),
   ] } as Sample;
-  assert.deepEqual(pointOf({ ...sample, time: 5 }), { time: 5, intervalMs: 2000, cpu: [2, 0, 0, 1, 0], memory: [30, 0, 0, 20, 10], systemCpu: 40, systemMemory: 900 });
+  assert.deepEqual(pointOf({ ...sample, time: 5 }), { time: 5, intervalMs: 2000, cpu: [2, 0, 0, 1, 0], memory: [30, 0, 0, 20, 10], systemCpu: 40, systemMemory: 900, owners: null });
   assert.equal(pointOf({ ...sample, time: 5, intervalMs: null }).cpu, null);
+  const owners = { 'plugin:a': .5, core: .25, gc: 0, other: 0 };
+  assert.equal(pointOf({ ...sample, time: 5, attribution: { cpu: owners, memory: null, startPauseMs: 1, error: null } }).owners, owners);
+});
+
+test('owner shares over a range are time weighted, and only readings with the Host\'s split count', () => {
+  const at = (time: number, owners: Record<string, number> | null, intervalMs = 2000) => ({ ...point(time, 1, 0, intervalMs), owners });
+  const points = [at(1000, { a: 9 }), at(3000, { a: 1, b: 2 }), at(4000, null), at(6000, { a: 4, b: 0 })];
+  // a: 1 over 1000 ms (2000–3000) and 4 over 2000 ms; b counted where present: 2 over 1000 ms, 0 over 2000 ms.
+  assert.deepEqual(ownerAverages(points, 2000, 6000), { a: 3, b: 2 / 3 });
+  assert.equal(ownerAverages([at(1000, null)], 0, 2000), null);
 });
 
 test('range average is time weighted and cuts the interval crossing the start; memory change says since when', () => {

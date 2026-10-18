@@ -1,4 +1,4 @@
-import type { Group, Kind } from './contracts';
+import type { Group, Kind, PluginInfo, REST } from './contracts';
 
 export const GROUP_LABEL: Record<Group, string> = { ui: '界面渲染', gpu: 'GPU', app: '主进程与服务', host: '后台服务', tools: '工具进程' };
 /**
@@ -18,3 +18,15 @@ export const KIND: Record<Kind, { label: string; note: string; about: string }> 
   host: { label: '后台服务', note: '运行 Agent、插件与会话', about: '运行 Agent、插件和会话。Agent 工作、插件计算时会升高；它启动的程序单独列在「工具进程」中。' },
   tool: { label: '工具进程', note: '由 DSH 后台启动', about: '由 DSH 后台启动的程序，例如终端、Agent 执行的命令、MCP 服务或开发服务器。它启动的子进程合并在一起计算。' },
 };
+
+/** The owners of the Host's main thread that are not plugins. */
+export const REST_LABEL: Record<typeof REST[number], { label: string; note: string; about: string }> = {
+  core: { label: 'DSH 内核', note: 'DSH 自身的代码', about: 'DSH 自身的代码，例如 Agent 循环、会话和模型请求的处理，按包细分。插件触发、由 DSH 稍后异步完成的工作也算在这里。' },
+  gc: { label: '垃圾回收', note: '回收不再使用的内存', about: 'V8 回收不再使用的内存所花的时间。本插件每 5 分钟读取一次内存，读取前的那次回收也计在这里。' },
+  other: { label: '其他', note: '原生代码与无法归属的依赖', about: '既不在插件目录、也不在 DSH 安装目录中的代码，以及 Node.js 内部和系统调用等原生代码。' },
+};
+/** What an owner is called on the page: a plugin by its own name, the rest by theirs. */
+export function ownerName(id: string, plugins: readonly PluginInfo[]) {
+  if (id.startsWith('plugin:')) { const pid = id.slice(7); return plugins.find(p => p.id === pid)?.label ?? pid; }
+  return REST_LABEL[id as typeof REST[number]]?.label ?? id;
+}

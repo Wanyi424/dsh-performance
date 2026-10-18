@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { attribute, type CpuProfile, type HeapNode } from '../src/attribution';
+import { Attributor, ownersOf, top, type CpuProfile, type HeapNode } from '../src/attribution';
 
 // Absolute the way the platform makes them (a drive letter on Windows), as real install and profile folders are.
 const root = resolve('/', 'app', 'DeepSeek Harness'), profile = resolve('/', 'home', 'u', '.dsh', 'profiles', 'desktop');
@@ -27,24 +27,29 @@ test('samples go to the nearest plugin frame on the stack, else to the DSH packa
     samples: [2, 2, 2, 2, 6, 7, 7, 8, 3, 4, 9], timeDeltas: [0, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000],
   };
   cpu.endTime = 11_000;
-  const r = attribute(cpu, null, plugins, root);
-  const by = Object.fromEntries(r.owners.map(o => [o.id, o]));
-  assert.equal(r.durationMs, 11); assert.equal(r.busyMs, 7); assert.equal(r.memory, null);
-  assert.equal(by['plugin:dsh-notes'].cpuMs, 3, 'its own frame and the DSH code it called');
-  assert.deepEqual(by['plugin:dsh-notes'].functions, [{ name: 'render', where: 'lib/host.js:42', value: 3 }]);
-  assert.equal(by['plugin:dsh-idle'].cpuMs, 0, 'installed plugins are listed even without samples');
-  assert.equal(by.core.cpuMs, 1); assert.deepEqual(by.core.modules, [{ name: '@deepseek-ai/dsh-agent-loop', cpuMs: 1, memory: 0 }]);
-  assert.equal(by.gc.cpuMs, 1);
-  assert.equal(by.other.cpuMs, 2, 'native time and a package that is neither DSH nor a plugin');
-  assert.deepEqual(by.other.modules!.map(m => m.name).sort(), ['katex', '原生代码']);
+  const r = new Attributor(root).cpu(cpu, plugins), by = (id: string) => r.owners.get(id);
+  assert.equal(r.durationMs, 11); assert.equal(r.busyMs, 7);
+  assert.equal(by('plugin:dsh-notes')!.value, 3, 'its own frame and the DSH code it called');
+  assert.deepEqual(top(by('plugin:dsh-notes')!.hot), [{ name: 'render', where: 'lib/host.js:42', value: 3 }]);
+  assert.equal(by('plugin:dsh-idle'), undefined, 'a plugin without samples has nothing booked');
+  assert.deepEqual(ownersOf(plugins), ['plugin:dsh-notes', 'plugin:dsh-idle', 'core', 'gc', 'other'], 'yet every installed plugin is an owner');
+  assert.equal(by('core')!.value, 1); assert.deepEqual(top(by('core')!.hot), [{ name: '@deepseek-ai/dsh-agent-loop', where: '', value: 1 }]);
+  assert.equal(by('gc')!.value, 1); assert.equal(by('gc')!.hot.size, 0);
+  assert.equal(by('other')!.value, 2, 'native time and a package that is neither DSH nor a plugin');
+  assert.deepEqual([...by('other')!.hot.keys()].sort(), ['katex', '原生代码']);
 });
 
 test('live allocations are charged by their allocation stacks', () => {
   const heap: HeapNode = { callFrame: frame('(root)'), selfSize: 0, children: [
     { callFrame: frame('loop', core), selfSize: 100, children: [{ callFrame: frame('render', notes, 9), selfSize: 400, children: [{ callFrame: frame('parse', core), selfSize: 50, children: [] }] }] },
   ] };
-  const r = attribute({ startTime: 0, endTime: 1000, nodes: [{ id: 1, callFrame: frame('(root)') }], samples: [], timeDeltas: [] }, heap, plugins, root);
-  const by = Object.fromEntries(r.owners.map(o => [o.id, o]));
-  assert.equal(r.memory, 550); assert.equal(by['plugin:dsh-notes'].memory, 450); assert.equal(by.core.memory, 100);
-  assert.deepEqual(by['plugin:dsh-notes'].allocations, [{ name: 'render', where: 'lib/host.js:10', value: 450 }]);
+  const r = new Attributor(root).heap(heap, plugins);
+  assert.equal(r.bytes, 550); assert.equal(r.owners.get('plugin:dsh-notes')!.value, 450); assert.equal(r.owners.get('core')!.value, 100);
+  assert.deepEqual(top(r.owners.get('plugin:dsh-notes')!.hot), [{ name: 'render', where: 'lib/host.js:10', value: 450 }]);
+});
+
+test('scripts are classified again when the list of plugins changes', () => {
+  const a = new Attributor(root), profile: CpuProfile = { startTime: 0, endTime: 2000, nodes: [{ id: 1, callFrame: frame('(root)'), children: [2] }, { id: 2, callFrame: frame('render', notes) }], samples: [2, 2], timeDeltas: [0, 1000] };
+  assert.equal(a.cpu(profile, plugins).owners.get('plugin:dsh-notes')!.value, 2);
+  assert.equal(a.cpu(profile, []).owners.get('other')!.value, 2, 'uninstalled: no longer a plugin');
 });

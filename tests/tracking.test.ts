@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { Tracker } from '../src/tracking';
+import { Tracker, ownerKey } from '../src/tracking';
 import type { ProcessMetric, Sample } from '../src/contracts';
 
 const proc = (pid: number, parent: number, name: string, extra: Partial<ProcessMetric> = {}): ProcessMetric =>
@@ -32,4 +32,17 @@ test('programs are recorded from their own start to when they were last seen, wi
   assert.equal(record.peakMemory, 90); assert.equal(record.peakCpu, 4);
   t.record(sample(24_000 + 3_600_001));
   assert.equal(t.snapshot().programs.length, 0); assert.equal(t.snapshot().series.has('5:5000'), false);
+});
+
+test('each owner of the Host\'s main thread keeps a trend; its memory steps from one reading to the next', () => {
+  const t = new Tracker(), MB = 1024 ** 2;
+  const split = (time: number, cpu: Record<string, number> | null, memory: Record<string, number> | null) =>
+    ({ ...sample(time), attribution: { cpu, memory: memory && { at: time, owners: memory, pauseMs: 30 }, startPauseMs: 200, error: null } }) as Sample;
+  t.record(split(30_000, null, null));
+  t.record(split(32_000, { 'plugin:a': .4, core: .2 }, null));
+  t.record(split(34_000, { 'plugin:a': .2, core: .2 }, { 'plugin:a': 3 * MB, core: 9 * MB }));
+  t.record(split(46_000, { 'plugin:a': 0, core: .1 }, { 'plugin:a': 3 * MB, core: 9 * MB }));
+  const a = t.snapshot().series.get(ownerKey('plugin:a'))!;
+  assert.deepEqual(a.times, [30_000, 45_000]); assert.ok(Math.abs(a.cpu[0] - .3) < 1e-9); assert.deepEqual(a.memory, [3 * MB, 3 * MB]);
+  assert.equal(t.snapshot().series.has(ownerKey('gc')), false, 'only owners the Host reported');
 });

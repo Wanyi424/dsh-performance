@@ -47,6 +47,6 @@ export function calculate(current: RawSample, previous?: RawSample, plugins: rea
     memory: memories.length ? memories.reduce((a, b) => a + b, 0) : null,
     system: now && { cpu: valid && total > 0 ? Math.min(100, Math.max(0, (1 - (now.idleMs - then!.idleMs) / total) * 100)) : null, memoryUsed: now.memoryTotal - now.memoryAvailable, memoryTotal: now.memoryTotal },
     processes, collector: current.collector && { pid: current.collector.pid, cpu: cpu(current.collector), memory: current.collector.memory },
-    unavailable: current.unavailable,
+    unavailable: current.unavailable, attribution: null,
   };
 }

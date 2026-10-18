@@ -1,10 +1,12 @@
 import { execFile, execFileSync, spawn, type ChildProcess } from 'node:child_process';
 import { once } from 'node:events';
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve, dirname, basename } from 'node:path';
 import { promisify } from 'node:util';
 import assert from 'node:assert/strict';
+// The check is about the collector built from this source; an older build would answer for older code.
+if ((await stat('lib/collector.exe')).mtimeMs < (await stat('native/Collector.cs')).mtimeMs) throw new Error('lib/collector.exe 早于 native/Collector.cs，请先运行 npm run build。');
 const root = await mkdtemp(join(tmpdir(), 'dsh-performance-check-'));
 let external: ChildProcess | undefined;
 try {

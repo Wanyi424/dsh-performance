@@ -8,7 +8,7 @@ class Doc extends EventTarget { hidden = false; hide(hidden: boolean) { this.hid
 const flush = () => new Promise<void>(resolve => setImmediate(resolve));
 const quiet = () => new Responsiveness({});
 function sample(time = Date.now()): Sample {
-  return { time, intervalMs: 2000, cpu: 1, memory: 10, cores: 8, started: 0, unavailable: 0, collector: { pid: 2, cpu: 0, memory: 2 }, system: null,
+  return { time, intervalMs: 2000, cpu: 1, memory: 10, cores: 8, started: 0, unavailable: 0, collector: { pid: 2, cpu: 0, memory: 2 }, system: null, attribution: null,
     processes: [{ pid: 1, parent: 0, created: 0, name: 'DeepSeek Harness.exe', kind: 'main', group: 'app', threads: 1, detail: null, cpu: 1, memory: 10 }] };
 }
 

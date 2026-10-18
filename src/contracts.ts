@@ -53,31 +53,38 @@ export interface Sample {
   collector: { pid: number; cpu: number | null; memory: number | null } | null;
   /** Processes in the tree that Windows did not let the collector read. */
   unavailable: number;
+  /** The Host's own split of its main thread and memory by plugin; null where the Host runs no profiler (tests, tools). */
+  attribution: Attribution | null;
 }
-/** One history point: per-group sums in GROUPS order, and the machine totals at that moment. */
-export interface Point { time: number; intervalMs: number | null; cpu: number[] | null; memory: number[] | null; systemCpu: number | null; systemMemory: number | null }
+/**
+ * One history point: per-group sums in GROUPS order, the machine totals at that moment, and the Host's main thread by owner
+ * (null when the reading had no matching profiler window).
+ */
+export interface Point { time: number; intervalMs: number | null; cpu: number[] | null; memory: number[] | null; systemCpu: number | null; systemMemory: number | null; owners: Record<string, number> | null }
 
 /** An installed plugin: a profile bundle that is not one of DSH's own. */
 export interface PluginInfo { id: string; label: string; version: string }
 
-/** Analysis lengths offered on the page; the Host refuses others. */
-export const ANALYSIS_SECONDS = [10, 30, 60] as const;
-/** Where the Host spent a stretch of its main thread, and the memory allocated meanwhile that was still alive at the end. */
-export interface Analysis {
-  durationMs: number; busyMs: number;
-  /** Estimated bytes allocated during the analysis and still alive after the closing garbage collection; null when not measured. */
-  memory: number | null;
-  owners: Owner[];
+/**
+ * The Host profiles itself so its main thread and memory can be split by plugin: a stack sample every 10 ms while readings
+ * come in, and an allocation sample per 128 KB from the start. Reading memory collects garbage first, so it is read every
+ * 5 minutes (the first a minute after the Host starts). Restarting the profiler walks the whole heap and pauses the Host,
+ * so it keeps running 10 minutes after the last reading before it stops.
+ */
+export const PROFILER = { sampleMs: 10, heapBytes: 128 * 1024, memoryEveryMs: 300_000, firstMemoryMs: 60_000, lingerMs: 600_000 };
+/** Owners of the Host's main thread besides the plugins (`plugin:<id>`): DSH itself, garbage collection, everything else. */
+export const REST = ['core', 'gc', 'other'] as const;
+export interface Attribution {
+  /** Each owner's share of the whole machine's CPU over this reading's interval, like `cpu`; null without a matching window. */
+  cpu: Record<string, number> | null;
+  /** The latest memory reading: bytes each owner allocated since monitoring began and still holds (sampled estimates). */
+  memory: { at: number; owners: Record<string, number>; pauseMs: number } | null;
+  /** How long the Host paused the last time the profiler started; null until it has. */
+  startPauseMs: number | null;
+  /** Why the Host cannot split itself in this environment; null when it can. */
+  error: string | null;
 }
+/** A function (`name`, file and line in `where`) or, for DSH and the rest, a package (`where` empty), with its time or bytes. */
 export interface Hot { name: string; where: string; value: number }
-/** A plugin, DSH itself, garbage collection or everything else; `modules` breaks DSH down by package. */
-export interface Owner {
-  id: string; kind: 'plugin' | 'core' | 'gc' | 'other'; label: string;
-  cpuMs: number; memory: number | null;
-  functions: Hot[]; allocations: Hot[]; modules?: { name: string; cpuMs: number; memory: number }[];
-}
-export type AnalysisState =
-  | { state: 'idle'; last?: { startedAt: number; seconds: number; result: Analysis } }
-  | { state: 'running'; startedAt: number; seconds: number; last?: { startedAt: number; seconds: number; result: Analysis } }
-  | { state: 'done'; startedAt: number; seconds: number; result: Analysis }
-  | { state: 'failed'; startedAt: number; seconds: number; error: string };
+/** Where one owner's main-thread time went over a range, and where its memory sits at the latest reading. */
+export interface OwnerDetail { cpu: Hot[]; memory: Hot[]; memoryAt: number | null }

@@ -11,10 +11,13 @@ export interface ProgramRecord {
   started: number; ended: number | null; peakCpu: number | null; peakMemory: number | null;
 }
 export interface Tracked { series: ReadonlyMap<string, Series>; programs: readonly ProgramRecord[] }
+/** The trend key of an owner of the Host's main thread: a plugin (`plugin:<id>`), DSH, garbage collection or the rest. */
+export const ownerKey = (id: string) => `owner:${id}`;
 
 /**
- * Follows every DSH process and tool program from one sample to the next: a coarse trend for each, and when each program
- * started and stopped. It reads only the samples already taken, so it adds no collection.
+ * Follows every DSH process, tool program and owner of the Host's main thread from one sample to the next: a coarse trend for
+ * each, and when each program started and stopped. It reads only the samples already taken, so it adds no collection. An
+ * owner's memory is read every few minutes; each bucket holds the latest reading, so its trend steps from one to the next.
  */
 export class Tracker {
   private series = new Map<string, Series & { n: number }>();
@@ -35,6 +38,8 @@ export class Tracker {
       }
     };
     for (const p of sample.processes) if (p.kind !== 'tool') put(keyOf(p), p.cpu, p.memory);
+    const split = sample.attribution;
+    if (split) for (const id of new Set([...Object.keys(split.cpu ?? {}), ...Object.keys(split.memory?.owners ?? {})])) put(ownerKey(id), split.cpu?.[id] ?? null, split.memory?.owners[id] ?? null);
     const running = new Set<string>();
     for (const program of programs(sample.processes)) {
       put(program.key, program.cpu, program.memory); running.add(program.key);

@@ -2,9 +2,12 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { createInterface, type Interface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
 import { calculate } from './metrics';
-import type { RawSample, Sample } from './contracts';
+import type { Attribution, RawSample, Sample } from './contracts';
 
-/** One helper per plugin, sampling strictly on demand. Concurrent callers share one result. */
+/**
+ * One helper per plugin, sampling strictly on demand. Concurrent callers share one result. Each fresh reading also closes the
+ * Host profiler's window, so the split of the Host by plugin covers the same interval as the CPU figures.
+ */
 export class Sampler {
   private child?: ChildProcessWithoutNullStreams;
   private lines?: Interface;
@@ -16,7 +19,7 @@ export class Sampler {
   private idle?: ReturnType<typeof setTimeout>;
   private disposed = false;
   constructor(private readonly executable = fileURLToPath(new URL('./collector.exe', import.meta.url)), private readonly args = [String(process.pid)],
-    private readonly plugins: () => readonly { id: string; dir: string }[] = () => []) {}
+    private readonly plugins: () => readonly { id: string; dir: string }[] = () => [], private readonly profiler?: { take(cores: number): Attribution }) {}
   private stop() {
     clearTimeout(this.idle);
     const child = this.child;
@@ -67,7 +70,8 @@ export class Sampler {
         timeout = setTimeout(() => { reject(new Error('采集超时，请稍后重试。')); this.stop(); }, 5_000);
         this.child!.stdin.write('sample\n');
       });
-      this.cached = calculate(raw, this.previous, this.plugins()); this.previous = raw; this.cachedAt = performance.now();
+      this.cached = { ...calculate(raw, this.previous, this.plugins()), attribution: this.profiler?.take(raw.cores) ?? null };
+      this.previous = raw; this.cachedAt = performance.now();
       return this.cached;
     } catch (error) { this.stop(); throw error; }
     finally { clearTimeout(timeout); }

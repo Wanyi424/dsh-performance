@@ -45,3 +45,14 @@ export async function copyText(text: string) {
   document.body.append(area); area.select();
   try { if (!document.execCommand('copy')) throw new Error('复制失败'); } finally { area.remove(); focused?.focus({ preventScroll: true }); }
 }
+
+/**
+ * Rows follow the chosen order on every reading, except while the pointer rests on the table: then they hold their places, so
+ * the row about to be clicked does not move away. New rows join at the end until the pointer leaves.
+ */
+export function useSteadyOrder(keys: string[], held: boolean) {
+  const order = useRef<string[]>([]);
+  if (!held) order.current = keys;
+  else { const present = new Set(keys); order.current = [...order.current.filter(k => present.has(k)), ...keys.filter(k => !order.current.includes(k))]; }
+  return order.current;
+}
