@@ -23,7 +23,7 @@ async function label(dir: string, fallback: string) {
  */
 export class PluginCatalog {
   private cached: PluginDir[] = [];
-  private readAt = 0;
+  private readAt = -Infinity;
   private reading?: Promise<PluginDir[]>;
   constructor(private readonly profiles = [process.cwd(), fileURLToPath(new URL('../../..', import.meta.url))], private readonly now = () => Date.now()) {}
   /** The last list read, refreshed in the background when stale; for callers that cannot wait. */

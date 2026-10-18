@@ -1,18 +1,12 @@
-import { API_PATH, CADENCE, HISTORY_MS, type Point, type Sample } from './contracts';
+import { call } from './api';
+import { CADENCE, HISTORY_MS, type Point, type Sample } from './contracts';
 import { pointOf } from './insights';
 import { Responsiveness, type ResponseLog } from './responsiveness';
 import { Tracker, type Tracked } from './tracking';
-declare global { interface Window { __DSH_TRANSPORT__?: { fetch?: typeof fetch } } }
 
 export interface State { sample?: Sample; points: Point[]; error: string; hidden: boolean; response: ResponseLog; tracked: Tracked }
 
-export async function fetchSample(signal: AbortSignal): Promise<Sample> {
-  const fetcher = window.__DSH_TRANSPORT__?.fetch ?? globalThis.fetch.bind(globalThis);
-  const response = await fetcher(API_PATH.slice(1), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'sample' }), signal: AbortSignal.any([signal, AbortSignal.timeout(8_000)]) });
-  const result = await response.json();
-  if (!response.ok) throw new Error(result.error?.message ?? `读取失败（HTTP ${response.status}）`);
-  return result.data;
-}
+export const fetchSample = (signal: AbortSignal) => call<Sample>('sample', {}, signal);
 
 /** One sampler shared by the sidebar row and the page; nothing is requested while the window is hidden. */
 export class Controller {

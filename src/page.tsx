@@ -1,10 +1,12 @@
 import React, { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
-import { CADENCE, type Group } from './contracts';
+import { call } from './api';
+import { CADENCE, type Group, type PluginInfo } from './contracts';
 import type { Controller } from './controller';
 import { Details } from './details';
-import { bytes, cpu, span } from './format';
+import { span } from './format';
 import { Alert, Info, Refresh } from './icons';
 import { Now } from './now';
+import { PluginSection } from './plugin-section';
 import { Processes } from './processes';
 import { Timeline } from './timeline';
 import { Dialog, Segmented, useStored } from './ui';
@@ -18,7 +20,8 @@ export function Page({ controller: c }: { controller: Controller }) {
   useEffect(() => c.attach(true), [c]);
   const root = useRef<HTMLDivElement>(null);
   const [range, setRange] = useStored<Range>('range', '15m', RANGES.map(r => r.value));
-  const [about, setAbout] = useState(false), [open, setOpen] = useState<string | null>(null);
+  const [about, setAbout] = useState(false), [open, setOpen] = useState<string | null>(null), [plugins, setPlugins] = useState<PluginInfo[]>([]);
+  useEffect(() => { void call<PluginInfo[]>('plugins').then(setPlugins, () => {}); }, []);
   // Pointing at a component anywhere (the share bar, the legend, a process row) highlights it in every chart. It is a style
   // on the root, not React state, so the charts do not re-render for it.
   const focus = useCallback((group: Group | null) => { const el = root.current; if (!el) return; if (group) el.dataset.focus = group; else delete el.dataset.focus; }, []);
@@ -38,11 +41,11 @@ export function Page({ controller: c }: { controller: Controller }) {
         <Now sample={sample} onFocus={focus} onOpen={show} />
         <Timeline points={s.points} response={s.response} programs={s.tracked.programs} start={start} end={end} onFocus={focus} />
       </div>
-      <Processes sample={sample} tracked={s.tracked} start={start} end={end} stale={stale} onFocus={focus} onOpen={show} />
+      <Processes sample={sample} tracked={s.tracked} start={start} end={end} stale={stale} plugins={plugins} onFocus={focus} onOpen={show} />
+      <PluginSection plugins={plugins} sample={sample} />
       <footer className="dpm-foot">
         <button type="button" className="dpm-link" onClick={() => setAbout(true)}><Info />统计口径</button>
         {sample && <span>DSH 已运行 {span(sample.time - sample.started)}</span>}
-        {sample?.collector && <span>监控自身占用 CPU {cpu(sample.collector.cpu)} · 内存 {bytes(sample.collector.memory)}</span>}
         {sample && sample.memory === null && <span data-tone="warn">当前 Windows 版本不提供专用工作集，内存无法显示</span>}
       </footer>
     </main></div>
@@ -57,6 +60,8 @@ export function Page({ controller: c }: { controller: Controller }) {
         <dd>专用工作集，即进程独占的物理内存，与任务管理器「详细信息」页的「内存(专用工作集)」一致。「整机」是已使用的物理内存（总量减去可用）。</dd>
         <dt>界面响应</dt>
         <dd>卡顿：DSH 窗口有一帧被拖延超过 50 毫秒，期间画面停住、无法响应输入。交互延迟：从点击或按键到界面画出反馈的时间，超过 200 毫秒会明显感到迟钝。只在窗口可见时记录；打开本页期间，本页自身的绘制也会计入。</dd>
+        <dt>插件占用</dt>
+        <dd>插件都运行在 DSH 后台进程里，系统无法分开计量。分析时，后台在自己进程里每毫秒采样一次调用栈，并按每 32 KB 抽样记录新分配的内存；每个样本归到调用栈上离它最近的插件代码，没有插件代码就算作 DSH 内核。插件触发、但由 DSH 稍后异步完成的工作没有插件的调用栈，会算进 DSH 内核；文件和网络读写不在主线程，不计入；界面部分不在统计范围内。分析结束时会做一次垃圾回收，只留下仍被占用的内存，后台可能短暂停顿一下。插件自带的程序按所在目录归属，实时统计。</dd>
         <dt>程序启停</dt>
         <dd>根据每次读数推断：启动时间取进程自身的创建时间，退出时间是最后一次看到它运行的时刻。窗口不可见期间不采样，期间启动又退出的程序不会出现。</dd>
         <dt>数据保留</dt>

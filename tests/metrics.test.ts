@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { calculate, classify } from '../src/metrics';
+import { join } from 'node:path';
+import { calculate, classify, pluginOf } from '../src/metrics';
 import { createHandler } from '../src/host';
 import type { RawProcess, RawSample } from '../src/contracts';
 
@@ -69,13 +70,22 @@ test('memory sums what Windows reports, and is unavailable only when nothing is 
   assert.equal(calculate(none).memory, null);
 });
 
-test('Host API only accepts sampling, never client-selected PIDs or commands', async () => {
-  let calls = 0; const handle = createHandler({ async sample() { calls++; return calculate(raw()); } });
+test('a tool process whose executable ships inside a plugin is that plugin\'s', () => {
+  const plugins = [{ id: 'dsh-ocr', dir: join('/profile', 'node_modules', 'dsh-ocr') }];
+  const next = raw(); next.processes[4] = { ...next.processes[4], image: join('/profile', 'node_modules', 'dsh-ocr', 'bin', 'ocr.exe') };
+  assert.equal(calculate(next, undefined, plugins).processes[4].plugin, 'dsh-ocr');
+  assert.equal(calculate(raw(), undefined, plugins).processes[4].plugin, null);
+  assert.equal(calculate(next).processes[0].plugin, undefined);
+  assert.equal(pluginOf(join('/profile', 'node_modules', 'dsh-ocr-extra', 'x.exe'), plugins), null, 'a sibling folder with the same prefix is not the plugin');
+});
+
+test('Host API only accepts fixed actions, never client-selected PIDs or commands', async () => {
+  let calls = 0; const handle = createHandler({ sampler: { async sample() { calls++; return calculate(raw()); } } });
   const request = (body: unknown) => new Request('http://localhost/api/dsh-performance', { method: 'POST', body: JSON.stringify(body) });
   assert.equal((await handle(request({ action: 'kill', pid: 10 }))).status, 400); assert.equal(calls, 0);
   const response = await handle(request({ action: 'sample', pid: 123, command: 'anything' }));
   assert.equal(response.status, 200); assert.equal((await response.json()).data.processes.length, 5); assert.equal(calls, 1);
-  const failed = createHandler({ async sample() { throw new Error('采集不可用'); } });
+  const failed = createHandler({ sampler: { async sample() { throw new Error('采集不可用'); } } });
   assert.match(await (await failed(request({ action: 'sample' }))).text(), /采集不可用/);
 });
 
@@ -85,4 +95,17 @@ test('the machine share comes from the same interval: busy CPU and physical memo
   assert.equal(calculate(raw()).system!.cpu, null);
   assert.equal(calculate({ ...raw(12_000), system: null }, raw()).system, null);
   assert.equal(s.processes[0].threads, 4);
+});
+
+test('analysis actions: lengths are limited to the offered ones; the plugin list carries no paths', async () => {
+  const started: number[] = [];
+  const analyzer = { async start(seconds: number) { started.push(seconds); return { state: 'running' as const, startedAt: 1, seconds }; }, status: () => ({ state: 'idle' as const }), cancel: () => ({ state: 'idle' as const }) };
+  const catalog = { async list() { return [{ id: 'dsh-a', label: 'A', version: '1.0.0', dir: '/secret/path' }]; } };
+  const handle = createHandler({ sampler: { async sample() { return calculate(raw()); } }, analyzer, catalog });
+  const post = async (body: unknown) => { const r = await handle(new Request('http://localhost/x', { method: 'POST', body: JSON.stringify(body) })); return { status: r.status, body: await r.json() }; };
+  assert.equal((await post({ action: 'analyze', seconds: 5 })).status, 400);
+  assert.equal((await post({ action: 'analyze', seconds: 30 })).body.data.state, 'running');
+  assert.deepEqual(started, [30]);
+  assert.deepEqual((await post({ action: 'plugins' })).body.data, [{ id: 'dsh-a', label: 'A', version: '1.0.0' }]);
+  assert.equal((await post({ action: 'analysis' })).body.data.state, 'idle');
 });

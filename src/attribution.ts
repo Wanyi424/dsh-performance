@@ -64,9 +64,9 @@ export function attribute(profile: CpuProfile, heap: HeapNode | null, plugins: r
   };
   const add = (map: Map<string, number>, key: string, value: number) => map.set(key, (map.get(key) ?? 0) + value);
   const book = (c: Charge, special: string | null, field: 'cpu' | 'memory', value: number) => {
-    if (special) { of(special)[field] += value; return; }
-    if (c.plugin) { const t = of(`plugin:${c.plugin.id}`); t[field] += value; add(field === 'cpu' ? t.hot : t.alloc, c.plugin.hot, value); return; }
-    const id = c.core ? 'core' : 'other', t = of(id), module = c.core ?? c.other ?? '原生代码';
+    if (special === 'gc') { of('gc')[field] += value; return; }
+    if (c.plugin && !special) { const t = of(`plugin:${c.plugin.id}`); t[field] += value; add(field === 'cpu' ? t.hot : t.alloc, c.plugin.hot, value); return; }
+    const id = c.core && !special ? 'core' : 'other', t = of(id), module = special ? '原生代码' : c.core ?? c.other ?? '原生代码';
     t[field] += value;
     const m = t.modules.get(module) ?? { cpu: 0, memory: 0 }; m[field] += value; t.modules.set(module, m);
   };

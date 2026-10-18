@@ -1,5 +1,5 @@
 import React, { memo, useRef, useState } from 'react';
-import type { Group, ProcessMetric, Sample } from './contracts';
+import type { Group, PluginInfo, ProcessMetric, Sample } from './contracts';
 import { bytes, clockShort, cpu, span } from './format';
 import { ArrowDown, Chevron } from './icons';
 import { byUsage, commandSummary, keyOf, programName, programs, type SortKey } from './insights';
@@ -24,8 +24,8 @@ function Usage({ value, total }: { value: number | null; total: number | null })
   return <span className="dpm-usage"><span className="dpm-usage-bar" aria-hidden="true"><i style={{ width: `${share}%` }} /></span>{bytes(value)}</span>;
 }
 
-export const Processes = memo(function Processes({ sample, tracked, start, end, stale, onFocus, onOpen }: {
-  sample?: Sample; tracked: Tracked; start: number; end: number; stale: boolean; onFocus(group: Group | null): void; onOpen(key: string): void;
+export const Processes = memo(function Processes({ sample, tracked, start, end, stale, plugins, onFocus, onOpen }: {
+  sample?: Sample; tracked: Tracked; start: number; end: number; stale: boolean; plugins: PluginInfo[]; onFocus(group: Group | null): void; onOpen(key: string): void;
 }) {
   const [sort, setSort] = useState<SortKey>('memory'), [held, setHeld] = useState(false), [showEnded, setShowEnded] = useState(false);
   const own: Row[] = (sample?.processes ?? []).filter(p => p.kind !== 'tool').map((p: ProcessMetric) => ({
@@ -34,7 +34,7 @@ export const Processes = memo(function Processes({ sample, tracked, start, end, 
   const running = programs(sample?.processes ?? []);
   const tools: Row[] = running.map(t => ({
     key: t.key, group: 'tools' as const, name: programName(t.lead.name), title: t.lead.detail ?? undefined, cpu: t.cpu, memory: t.memory,
-    note: `${commandSummary(t.lead.detail) || t.lead.name}${t.members.length > 1 ? ` · ${t.members.length} 个进程` : ''} · PID ${t.lead.pid}`,
+    note: `${t.plugin ? `插件「${plugins.find(p => p.id === t.plugin)?.label ?? t.plugin}」的程序 · ` : ''}${commandSummary(t.lead.detail) || t.lead.name}${t.members.length > 1 ? ` · ${t.members.length} 个进程` : ''} · PID ${t.lead.pid}`,
   })).sort(byUsage(sort));
   const live = new Set(running.map(t => t.key));
   const ended = tracked.programs.filter(r => r.ended !== null && !live.has(r.key) && r.ended >= start).sort((a, b) => b.ended! - a.ended!);

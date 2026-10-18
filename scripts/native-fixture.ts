@@ -1,5 +1,6 @@
 // Runs as the Host inside tests/DesktopFixture.cs: checks the collector against a real Windows process tree.
 import { spawn, spawnSync } from 'node:child_process';
+import { dirname } from 'node:path';
 import assert from 'node:assert/strict';
 import { Sampler } from '../src/collector';
 const [executable, ...ids] = process.argv.slice(2);
@@ -7,7 +8,9 @@ const [root, renderer, gpu, external] = ids.map(Number);
 // A program the Host starts, which starts another: one tool program of two processes (plus any console host).
 const shell = spawn(process.env.ComSpec ?? 'cmd.exe', ['/d', '/c', 'ping -n 60 127.0.0.1 >nul'], { windowsHide: true, stdio: 'ignore' });
 const wait = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
-const sampler = new Sampler(executable);
+// A stand-in plugin whose folder holds cmd.exe: the shell below must be charged to it by its executable's path.
+const shellPath = process.env.ComSpec ?? 'C:\\Windows\\System32\\cmd.exe';
+const sampler = new Sampler(executable, undefined, () => [{ id: 'stand-in-plugin', dir: dirname(shellPath) }]);
 try {
   await wait(800);
   const [a, b] = await Promise.all([sampler.sample(), sampler.sample()]);
@@ -16,6 +19,8 @@ try {
   assert.equal(kind.get(root), 'main'); assert.equal(kind.get(renderer), 'renderer'); assert.equal(kind.get(gpu), 'gpu');
   assert.equal(kind.get(process.pid), 'host'); assert.equal(kind.get(shell.pid!), 'tool');
   assert.match(a.processes.find(p => p.pid === shell.pid)!.detail ?? '', /ping -n 60/, 'tool command line is read');
+  assert.equal(a.processes.find(p => p.pid === shell.pid)!.plugin, 'stand-in-plugin', 'a tool from a plugin folder belongs to that plugin');
+  assert.equal(a.processes.find(p => p.pid === root)!.plugin, undefined, 'only tool processes are matched to plugins');
   assert.ok(a.processes.some(p => p.parent === shell.pid && p.kind === 'tool' && /^ping/i.test(p.name)), 'a grandchild of the Host is a tool process too');
   assert.ok(!kind.has(external), 'a same-named program outside the DSH tree is excluded');
   assert.ok(a.collector && !kind.has(a.collector.pid), 'the collector is reported apart from the totals');
@@ -32,6 +37,7 @@ try {
   sampler.dispose(); await wait(150); assert.throws(() => process.kill(resumed.collector!.pid, 0));
   await assert.rejects(sampler.sample(), /关闭/);
   console.log(JSON.stringify({ scope: 'main, renderer, GPU, Host and a tool shell with its child; same-named outside program excluded', kinds: [...new Set(a.processes.map(p => p.kind))],
+    pluginHelper: a.processes.find(p => p.pid === shell.pid)!.plugin,
     machine: { cpu: second.system!.cpu, memoryUsedMB: Math.round(second.system!.memoryUsed / 1024 ** 2), memoryTotalMB: Math.round(second.system!.memoryTotal / 1024 ** 2) },
     cache: 'concurrent requests shared', idle: 'helper exited after 15 seconds', resume: 'new helper and fresh CPU baseline', dispose: 'helper exited', collectorMemory: second.collector!.memory }));
 } finally { sampler.dispose(); spawnSync('taskkill', ['/pid', String(shell.pid), '/t', '/f'], { windowsHide: true, stdio: 'ignore' }); }
