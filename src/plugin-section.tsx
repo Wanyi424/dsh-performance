@@ -56,10 +56,11 @@ export const PluginSection = memo(function PluginSection({ plugins, sample, poin
   const memory = split?.memory;
 
   return <section className="dpm-section dpm-plugins" aria-labelledby="dpm-plugins-title" data-stale={stale || undefined}>
-    <header className="dpm-section-head"><h2 id="dpm-plugins-title">插件</h2><span>后台主线程和内存按插件归属，点击一行查看详情</span></header>
+    <header className="dpm-section-head"><h2 id="dpm-plugins-title">插件</h2><span>打开本页时按需分析后台主线程和内存，点击一行查看详情</span></header>
     <p className="dpm-plugins-meta">
       {/* Each sentence is one span: the line wraps between sentences, never inside one. */}
-      {split?.error ? <span data-tone="danger">{split.error}</span> : <span>{total === null ? '正在开始统计，下一次读数后显示。'
+      {split?.error ? <span data-tone="danger">{split.error}</span> : <span>{!split ? '插件归属分析只在本页可见时开启；界面 Renderer 和 GPU 内存不归属到具体插件。'
+        : total === null ? '正在开始统计，下一次读数后显示。'
         : <>所选时间范围内，后台主线程平均占整机 <b>{cpu(total)}</b>：插件 {cpu(ofPlugins)} · DSH 内核 {cpu(averages!.core)} · 垃圾回收 {cpu(averages!.gc)}。</>}</span>}
       {!split?.error && <span>{memory ? `内存 ${clockShort(memory.at)} 读取，每 ${PROFILER.memoryEveryMs / 60_000} 分钟一次。` : `内存在 DSH 启动约 ${PROFILER.firstMemoryMs / 60_000} 分钟后第一次读取。`}</span>}
     </p>

@@ -20,6 +20,20 @@ type Range = typeof RANGES[number]['value'];
 export function Page({ controller: c }: { controller: Controller }) {
   const s = useSyncExternalStore(c.subscribe, c.snapshot);
   useEffect(() => c.attach(true), [c]);
+  useEffect(() => {
+    let live = true;
+    const sync = () => {
+      if (!live) return;
+      void call('profiling', { enabled: !document.hidden }).catch(() => {});
+    };
+    sync();
+    document.addEventListener('visibilitychange', sync);
+    return () => {
+      live = false;
+      document.removeEventListener('visibilitychange', sync);
+      void call('profiling', { enabled: false }).catch(() => {});
+    };
+  }, []);
   const root = useRef<HTMLDivElement>(null);
   const [range, setRange] = useStored<Range>('range', '15m', RANGES.map(r => r.value));
   const [about, setAbout] = useState(false), [open, setOpen] = useState<string | null>(null), [plugins, setPlugins] = useState<PluginInfo[]>([]);
@@ -63,16 +77,18 @@ export function Page({ controller: c }: { controller: Controller }) {
         <dd>占整台电脑算力的比例{sample ? `，${sample.cores} 个逻辑处理器全部满载为 100%` : ''}，与任务管理器一致。平均值按时间加权。「整机」是同一时段内所有程序合计的 CPU 使用率。</dd>
         <dt>内存</dt>
         <dd>专用工作集，即进程独占的物理内存，与任务管理器「详细信息」页的「内存(专用工作集)」一致。「整机」是已使用的物理内存（总量减去可用）。</dd>
+        <dt>插件占用为什么可能很小</dt>
+        <dd>插件归属只覆盖 DSH Host 的后台 JavaScript 主线程和 V8 抽样堆。插件页面运行在 DSH 共用的 Renderer，图片、DOM、SVG、Chromium 缓存以及 GPU 资源无法可靠归属到某个插件，因此不会显示在插件行里；它们仍会计入 DSH 的 Renderer 或 GPU 总量。</dd>
         <dt>界面响应</dt>
         <dd>卡顿：DSH 窗口有一帧被拖延超过 50 毫秒，期间画面停住、无法响应输入。交互延迟：从点击或按键到界面画出反馈的时间，超过 200 毫秒会明显感到迟钝。只在窗口可见时记录；打开本页期间，本页自身的绘制也会计入。</dd>
         <dt>插件占用</dt>
-        <dd>插件都运行在 DSH 后台进程里，系统无法分开计量，因此后台在自己进程里采样：窗口可见时每 {PROFILER.sampleMs} 毫秒记录一次主线程的调用栈，每个样本归到调用栈上离它最近的插件代码，没有插件代码就算作 DSH 内核。插件触发、但由 DSH 稍后异步完成的工作没有插件的调用栈，会算进 DSH 内核；文件和网络读写不在主线程，不计入；界面部分不在统计范围内。内存从 DSH 启动起每分配约 {PROFILER.heapBytes / 1024} KB 抽样记录一次，每 {PROFILER.memoryEveryMs / 60_000} 分钟读取一次各插件分配、目前仍占用的部分；本插件加载之前分配的不计入。插件自带的程序按所在目录归属，实时统计。</dd>
+        <dd>插件都运行在 DSH 后台进程里，系统无法分开计量，因此只有打开本页且窗口可见时才按需启动后台采样：每 {PROFILER.sampleMs} 毫秒记录一次主线程的调用栈，每个样本归到调用栈上离它最近的插件代码，没有插件代码就算作 DSH 内核。插件触发、但由 DSH 稍后异步完成的工作没有插件的调用栈，会算进 DSH 内核；文件和网络读写不在主线程，不计入；界面部分不在统计范围内。内存从采样启动起每分配约 {PROFILER.heapBytes / 1024} KB 抽样记录一次，每 {PROFILER.memoryEveryMs / 60_000} 分钟读取一次各插件分配、目前仍占用的部分；采样停止后不再保留新的归属数据。插件自带的程序按所在目录归属，实时统计。</dd>
         <dt>程序启停</dt>
         <dd>根据每次读数推断：启动时间取进程自身的创建时间，退出时间是最后一次看到它运行的时刻。窗口不可见期间不采样，期间启动又退出的程序不会出现。</dd>
         <dt>数据保留</dt>
         <dd>最近 1 小时，只保存在内存中，不写入磁盘、不上传，关闭 DSH 后清空。进程趋势按 15 秒汇总。窗口不可见时暂停采集，图上留出空档。</dd>
         <dt>采集开销</dt>
-        <dd>由一个独立的小程序按需读取进程信息，闲置 15 秒后自动退出；它的占用显示在「插件」分区「运行监控」一行的自带进程中，不计入 DSH 合计。插件归属的采样在后台进程里进行：启动采样要扫描一遍后台的内存{split?.startPauseMs != null ? `，本次启动时后台停顿 ${ms(split.startPauseMs)}` : ''}，所以窗口隐藏后仍保持 {PROFILER.lingerMs / 60_000} 分钟再停止；读取内存前要做一次完整的垃圾回收{split?.memory ? `，最近一次后台停顿 ${ms(split.memory.pauseMs)}` : ''}。停顿只发生在后台，界面不受影响。</dd>
+        <dd>由一个独立的小程序按需读取进程信息，闲置 15 秒后自动退出；它的占用显示在「插件」分区「运行监控」一行的自带进程中，不计入 DSH 合计。插件归属采样仅在本页可见时按需运行，离开本页或窗口隐藏后立即停止；启动采样要扫描一遍后台的内存{split?.startPauseMs != null ? `，本次启动时后台停顿 ${ms(split.startPauseMs)}` : ''}，读取内存前要做一次完整的垃圾回收{split?.memory ? `，最近一次后台停顿 ${ms(split.memory.pauseMs)}` : ''}。停顿只发生在后台，界面不受影响。</dd>
       </dl>
     </Dialog>}
   </div>;

@@ -66,10 +66,8 @@ export interface Point { time: number; intervalMs: number | null; cpu: number[] 
 export interface PluginInfo { id: string; label: string; version: string }
 
 /**
- * The Host profiles itself so its main thread and memory can be split by plugin: a stack sample every 10 ms while readings
- * come in, and an allocation sample per 128 KB from the start. Reading memory collects garbage first, so it is read every
- * 5 minutes (the first a minute after the Host starts). Restarting the profiler walks the whole heap and pauses the Host,
- * so it keeps running 10 minutes after the last reading before it stops.
+ * The Host can profile itself so its main thread and memory can be split by plugin. This is enabled only while the details
+ * page is visible; the sidebar's lightweight process readings never start an inspector session.
  */
 export const PROFILER = { sampleMs: 10, heapBytes: 128 * 1024, memoryEveryMs: 300_000, firstMemoryMs: 60_000, lingerMs: 600_000 };
 /** Owners of the Host's main thread besides the plugins (`plugin:<id>`): DSH itself, garbage collection, everything else. */

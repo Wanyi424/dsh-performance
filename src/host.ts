@@ -8,7 +8,11 @@ export interface HostContext {
   effect(fn: () => (() => unknown), label?: string): unknown;
   connection: { fetch: { register(route: { path: string; methods: string[]; requestBody: 'buffered'; fetch(request: Request): Promise<Response> }): unknown } };
 }
-type Parts = { sampler: Pick<Sampler, 'sample'>; profiler?: Pick<HostProfiler, 'detail'>; catalog?: Pick<PluginCatalog, 'list'> };
+type Parts = {
+  sampler: Pick<Sampler, 'sample'>;
+  profiler?: Pick<HostProfiler, 'detail'> & Partial<Pick<HostProfiler, 'enable' | 'disable'>>;
+  catalog?: Pick<PluginCatalog, 'list'>;
+};
 const json = (body: unknown, status = 200) => Response.json(body, { status, headers: { 'Cache-Control': 'no-store' } });
 
 /** The page's only door to the Host: fixed actions, no PIDs, paths or commands accepted from the page. */
@@ -18,6 +22,11 @@ export function createHandler({ sampler, profiler, catalog }: Parts) {
       const body = await request.json();
       switch (body?.action) {
         case 'sample': return json({ data: await sampler.sample() });
+        case 'profiling': {
+          if (typeof body.enabled !== 'boolean') throw new Error('不支持的监控操作。');
+          if (body.enabled) await profiler?.enable?.(); else profiler?.disable?.();
+          return json({ data: { enabled: body.enabled && !!profiler?.enable } });
+        }
         case 'plugins': return json({ data: (await catalog?.list() ?? []).map(({ id, label, version }) => ({ id, label, version })) });
         case 'owner': {
           // An owner id only looks up what the profiler recorded; an unknown one simply has nothing.
@@ -34,8 +43,9 @@ export function createHandler({ sampler, profiler, catalog }: Parts) {
 }
 export function apply(ctx: HostContext) {
   const catalog = new PluginCatalog(), profiler = new HostProfiler(() => catalog.current());
-  // The plugin list is read before the first reading arrives, so the first window already knows the plugins.
-  void catalog.list(); void profiler.start();
+  // The catalog is cheap and can be prepared up front. V8 CPU/Heap profiling is deliberately opt-in:
+  // the sidebar needs process readings, but it should not keep an inspector and sampling heap alive.
+  void catalog.list();
   const sampler = new Sampler(undefined, undefined, () => catalog.current(), profiler);
   ctx.connection.fetch.register({ path: API_PATH, methods: ['POST'], requestBody: 'buffered', fetch: createHandler({ sampler, profiler, catalog }) });
   ctx.effect(() => () => { profiler.dispose(); sampler.dispose(); }, 'performance: collector and profiler');

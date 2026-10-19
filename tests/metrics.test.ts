@@ -89,6 +89,18 @@ test('Host API only accepts fixed actions, never client-selected PIDs or command
   assert.match(await (await failed(request({ action: 'sample' }))).text(), /采集不可用/);
 });
 
+test('profiling is an explicit opt-in action and never accepts arbitrary commands', async () => {
+  const calls: boolean[] = [];
+  const handle = createHandler({ sampler: { async sample() { return calculate(raw()); } }, profiler: {
+    async enable() { calls.push(true); }, disable() { calls.push(false); }, detail() { return { cpu: [], memory: [], memoryAt: null }; },
+  } });
+  const post = (body: unknown) => handle(new Request('http://localhost/x', { method: 'POST', body: JSON.stringify(body) }));
+  assert.equal((await post({ action: 'profiling', enabled: true })).status, 200);
+  assert.equal((await post({ action: 'profiling', enabled: false })).status, 200);
+  assert.deepEqual(calls, [true, false]);
+  assert.equal((await post({ action: 'profiling', enabled: 'yes' })).status, 400);
+});
+
 test('the machine share comes from the same interval: busy CPU and physical memory in use', () => {
   const s = calculate(raw(12_000), raw());
   assert.equal(s.system!.cpu, 75); assert.equal(s.system!.memoryUsed, 6 * 1024 ** 3); assert.equal(s.system!.memoryTotal, 16 * 1024 ** 3);

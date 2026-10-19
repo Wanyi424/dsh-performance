@@ -12,15 +12,14 @@ const MINUTE = 60_000;
 const RELEASE_MS = 30_000;
 
 /**
- * The Host profiling itself, so its main thread and memory can be split by plugin. One inspector session for the Host's life:
- * - CPU: V8's sampling profiler, from the first reading on. Each fresh reading closes the running window and opens the next,
- *   overlapping, so the profiler never restarts in between: a restart walks the whole heap and pauses the Host (about 0.3 s
- *   at a 150 MB heap on Windows). With no readings for a while (the window hidden) it stops, and starts with the next one.
- * - Memory: V8's sampling heap profiler from the start; it does nothing until memory is allocated. Reading it collects
- *   garbage first, so it is read seldom, and only while readings come in.
+ * The Host profiling itself, so its main thread and memory can be split by plugin. It is opened only while the details page is
+ * visible. CPU windows overlap so the profiler does not restart between readings; memory is read seldom because it collects
+ * garbage first. The ordinary sidebar sampler never opens this inspector session.
  */
 export class HostProfiler {
   private session?: Session;
+  private starting?: Promise<void>;
+  private enabled = false;
   private error: string | null = null;
   private readonly attributor: Attributor;
   /** Console-profile title of the open window, if the profiler runs. */
@@ -42,7 +41,29 @@ export class HostProfiler {
     this.nextRead = now() + PROFILER.firstMemoryMs;
   }
 
-  async start() {
+  /** Enable the expensive Host attribution only while the details page needs it. */
+  async enable() {
+    this.enabled = true;
+    if (this.session) return;
+    if (this.starting) return this.starting;
+    this.starting = this.open().finally(() => { this.starting = undefined; });
+    await this.starting;
+  }
+
+  /** Kept as a small compatibility alias for tests and embedders. */
+  async start() { return this.enable(); }
+
+  /** Stop both profilers and release their inspector session immediately. */
+  disable() {
+    this.enabled = false;
+    if (this.starting) {
+      void this.starting.then(() => { if (!this.enabled) this.stopSession(); });
+      return;
+    }
+    this.stopSession();
+  }
+
+  private async open() {
     const session = new Session();
     try {
       session.connect();
@@ -54,11 +75,14 @@ export class HostProfiler {
       await session.post('HeapProfiler.startSampling', { samplingInterval: PROFILER.heapBytes });
     } catch (error) {
       session.disconnect();
+      this.enabled = false;
       this.error = `当前环境无法按插件统计后台：${error instanceof Error ? error.message : String(error)}`;
       return;
     }
     this.session = session;
     this.release = setInterval(() => void session.post('Runtime.discardConsoleEntries').catch(() => {}), RELEASE_MS); this.release.unref();
+    // A page can disappear while the inspector handshake is in flight.
+    if (!this.enabled) this.stopSession();
   }
 
   /**
@@ -67,7 +91,7 @@ export class HostProfiler {
    */
   take(cores: number): Attribution {
     const rest = () => ({ memory: this.memory, startPauseMs: this.startPauseMs, error: this.error });
-    if (!this.session) return { cpu: null, ...rest() };
+    if (!this.enabled || !this.session) return { cpu: null, ...rest() };
     this.keep();
     const next = `dsh-performance#${++this.count}`;
     if (this.running === null) {
@@ -137,10 +161,21 @@ export class HostProfiler {
     }
   }
   dispose() {
+    this.enabled = false;
+    if (this.starting) void this.starting.then(() => this.stopSession());
+    else this.stopSession();
+  }
+
+  private stopSession() {
     clearTimeout(this.linger); clearInterval(this.release);
+    this.linger = undefined; this.release = undefined;
     const session = this.session; this.session = undefined;
-    if (!session) return;
     if (this.running) { this.close(this.running); this.running = null; }
+    this.received = undefined;
+    this.memory = null; this.held = new Map(); this.minutes = [];
+    this.startPauseMs = null; this.nextRead = this.now() + PROFILER.firstMemoryMs;
+    this.error = null;
+    if (!session) return;
     void session.post('HeapProfiler.stopSampling').catch(() => {});
     void session.post('Runtime.discardConsoleEntries').catch(() => {});
     session.disconnect();

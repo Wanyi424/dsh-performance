@@ -1,6 +1,6 @@
 {
   "name": "dsh-performance",
-  "version": "0.6.1",
+  "version": "0.6.2",
   "description": "DSH 运行监控：侧栏实时读数；整机占比、CPU/内存/界面响应三轨联动、进程趋势与工具进程启停，以及按插件实时拆分后台的 CPU 与内存。",
   "type": "module",
   "license": "MIT",
