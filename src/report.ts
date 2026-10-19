@@ -1,4 +1,4 @@
-import { childLines, foldKey, type Breakdown, type Row } from './breakdown';
+import type { Breakdown, Row } from './breakdown';
 import type { PluginInfo, Point, Sample } from './contracts';
 import { bytes, change, clock, cpu, dateTime, duration, gb, span } from './format';
 import { SLOW_INTERACTION_MS, summarize, summarizeResponse } from './insights';
@@ -30,9 +30,10 @@ export function report({ now, rangeMs, rangeLabel, sample, points, response, ver
   ]));
   if (s.memoryChange !== null && s.since !== null) out.push('', `DSH 内存较 ${span(now - s.since)}前 ${change(s.memoryChange)}。`);
 
-  // Every line, folded plugins included, in the order the list shows them open.
-  const lines = (list: Row[], depth = 0): string[][] => list.flatMap(r => [[`${depth ? '└ ' : ''}${r.name}${r.tag ? `（插件：${r.tag}）` : ''}`, cpu(r.cpu), bytes(r.memory)],
-    ...lines(childLines(r, new Set([foldKey(r.key)])), depth + 1)]);
+  // Every line, in the order the list shows them open. A program's tag is the plugin it belongs to; the Host's, a paused split.
+  const tag = (r: Row) => r.tag ? `（${r.group === 'tools' ? '插件：' : ''}${r.tag}）` : '';
+  const lines = (list: Row[], depth = 0): string[][] => list.flatMap(r => [[`${depth ? '└ ' : ''}${r.name}${tag(r)}`, cpu(r.cpu), bytes(r.memory)],
+    ...lines(r.children ?? [], depth + 1)]);
   out.push('', `## 各部分（CPU 为 ${rangeLabel}平均，内存为当前）`, '', ...table(['部分', '平均 CPU', '内存'], lines(rows.dsh)));
   const memory = sample?.attribution?.memory;
   if (memory) out.push('', `插件内存为 ${clock(memory.at)} 读取的抽样估算，只含${sample?.attribution?.since ? ` ${clock(sample.attribution.since)} 起` : '统计开始后'}分配、仍在占用的部分。`);

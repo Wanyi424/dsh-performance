@@ -6,32 +6,36 @@ import { BUCKET_MS, groupKey, ownerKey, seriesStats, type ProgramRecord, type Se
 
 const MB = 1024 ** 2, HOST = GROUPS.indexOf('host');
 /**
- * A plugin below both over the range, with no program of its own running, folds into one line under the Host: most installed
- * plugins sit idle most of the time.
+ * A line below both over the range barely uses anything. It is greyed rather than folded away: most installed plugins sit
+ * idle most of the time, and a second fold inside an open part costs another click to see them all.
  */
 const IDLE = { cpu: .05, memory: 5 * MB };
+/** The headings the Host's lines sit under: its plugins, then what is not a plugin. */
+const HEADING = { plugins: '插件', rest: '不属于插件' } as const;
 
 /** One line of「谁在占用」. */
 export interface Row {
   /** What the drawer opens for it: `group:<g>`, a process or program key, or `owner:<id>`. */
-  key: string; group: Group; name: string; note: string;
-  /** For a program a plugin ships: that plugin's name. */
+  key: string; group: Group; name: string;
+  /** What it is, in a few words: the list's「说明」column. */
+  note: string;
+  /** A short label beside the name: for a program a plugin ships, that plugin's name; for this plugin,「本插件」; for the Host, a paused split. */
   tag?: string;
   /** CPU is the average over the range (a program's, over the part of it that it ran); memory is now, or an ended program's peak. */
   cpu: number | null; memory: number | null;
   /** The memory is the profiler's sampled estimate: plugins, DSH itself and the rest. */
   estimate?: boolean;
   series?: Series;
-  /** Its lines when opened; `folded` are plugins that barely use anything, behind one more toggle. */
-  children?: Row[]; folded?: Row[];
-  /** DSH itself and the rest, listed after the plugins under the Host. */
-  quiet?: boolean;
+  /** Its lines when opened, in the order the list shows them. */
+  children?: Row[];
+  /** The heading it is listed under in its part, shown once over a run of lines alike: the Host's plugins, and the rest. */
+  heading?: string;
   /** A program that ended: every run of the same command in the range, newest first. */
   runs?: ProgramRecord[];
 }
 export interface Breakdown { dsh: Row[]; programs: Row[]; ended: Row[]; endedCount: number }
-/** The key that opens a row's folded lines. */
-export const foldKey = (key: string) => `fold:${key}`;
+/** Barely used over the range, CPU and memory both: the list greys such a line, so what is busy stands out. */
+export const idle = (r: Pick<Row, 'cpu' | 'memory'>) => r.cpu !== null && r.cpu < IDLE.cpu && (r.memory ?? 0) < IDLE.memory;
 
 /** What a reading's Host CPU leaves after its owners: its other threads, or all of it when the reading carries no split. */
 export const restOf = (p: Point) => p.cpu ? Math.max(0, p.cpu[HOST] - (p.owners ? sum(Object.values(p.owners)) : 0)) : null;
@@ -76,29 +80,33 @@ export function breakdown({ sample, points, tracked, plugins, start, end, sort }
 
   // Without a single split in the range (paused, or not available here), the plugins are unknown rather than idle.
   const splitSeen = !!split && Object.keys(split.owners).length > 0, held = a?.memory?.owners, helpers = helpersOf(sample);
-  const owner = (id: string, name: string, note: string, quiet?: true): Row => ({ key: ownerKey(id), group: 'host', name, note, quiet, estimate: true,
-    cpu: splitSeen ? split!.owners[id] ?? 0 : null, memory: held?.[id] ?? null, series: tracked.series.get(ownerKey(id)) });
+  const owner = (id: string, name: string, note: string, heading: string, tag?: string): Row => ({ key: ownerKey(id), group: 'host', name, note, tag, heading,
+    estimate: true, cpu: splitSeen ? split!.owners[id] ?? 0 : null, memory: held?.[id] ?? null, series: tracked.series.get(ownerKey(id)) });
+  // A plugin's note names its package and version, so a developer can tell exactly which one it is.
   const plugged = plugins.map(p => {
     const h = helpers.get(p.id);
-    return owner(`plugin:${p.id}`, p.label, ['插件', p.id === SELF && '本插件', h && `自带 ${h.count} 个程序`].filter(Boolean).join(' · '));
+    return owner(`plugin:${p.id}`, p.label, [p.id, p.version && `v${p.version}`, h && `自带 ${h.count} 个程序`].filter(Boolean).join(' · '), HEADING.plugins,
+      p.id === SELF ? '本插件' : undefined);
   }).sort(order);
-  const idle = (r: Row) => r.cpu !== null && r.cpu < IDLE.cpu && (r.memory ?? 0) < IDLE.memory && !helpers.has(r.key.slice(ownerKey('plugin:').length));
-  const hostLines = (): Pick<Row, 'children' | 'folded'> => ({
-    children: [...plugged.filter(r => !idle(r)), owner('core', OWNER_LABEL.core.label, OWNER_LABEL.core.note, true), {
-      key: ownerKey('misc'), group: 'host', name: OWNER_LABEL.misc.label, note: OWNER_LABEL.misc.note, quiet: true, estimate: true,
-      cpu: split ? (split.owners.gc ?? 0) + (split.owners.other ?? 0) + split.rest : null, memory: held?.other ?? null, series: pointSeries(points, start, miscOf),
-    }],
-    folded: plugged.filter(idle),
-  });
+  // Every plugin, busiest first; then, under a heading of their own, DSH itself and「其他」.
+  const hostLines = (): Row[] => [...plugged, owner('core', OWNER_LABEL.core.label, OWNER_LABEL.core.note, HEADING.rest), {
+    key: ownerKey('misc'), group: 'host', name: OWNER_LABEL.misc.label, note: OWNER_LABEL.misc.note, heading: HEADING.rest, estimate: true,
+    cpu: split ? (split.owners.gc ?? 0) + (split.owners.other ?? 0) + split.rest : null, memory: held?.other ?? null, series: pointSeries(points, start, miscOf),
+  }];
 
   const dsh = (['ui', 'gpu', 'app', 'host'] as const).flatMap((g): Row[] => {
     const members = own.filter(p => p.group === g), memories = members.flatMap(p => p.memory === null ? [] : [p.memory]);
     if (!members.length) return [];
     const row: Row = { key: groupKey(g), group: g, name: GROUP_LABEL[g], note: GROUP_ABOUT[g].note, series: tracked.series.get(groupKey(g)),
       cpu: averages?.[GROUPS.indexOf(g)] ?? null, memory: memories.length ? sum(memories) : null };
-    if (g === 'host') return [{ ...row, ...hostLines(), cpu: split?.total ?? row.cpu, note: a?.state === 'paused' ? '插件统计已暂停' : row.note }];
-    if (members.length > 1) row.children = members.map((p): Row => ({ key: keyOf(p), group: g, name: KIND[p.kind].label, cpu: average(keyOf(p)), memory: p.memory,
-      note: p.kind === 'utility' && p.detail ? p.detail.split('.').at(-1)! : KIND[p.kind].note, series: tracked.series.get(keyOf(p)) })).sort(order);
+    // A part that opens says how many lines it opens into, which also shows while it is closed.
+    if (g === 'host') return [{ ...row, children: hostLines(), cpu: split?.total ?? row.cpu, note: plugins.length ? `${row.note} · ${plugins.length} 个插件` : row.note,
+      tag: a?.state === 'paused' ? '插件统计已暂停' : undefined }];
+    if (members.length > 1) {
+      row.note += ` · ${members.length} 个进程`;
+      row.children = members.map((p): Row => ({ key: keyOf(p), group: g, name: KIND[p.kind].label, cpu: average(keyOf(p)), memory: p.memory,
+        note: p.kind === 'utility' && p.detail ? p.detail.split('.').at(-1)! : KIND[p.kind].note, series: tracked.series.get(keyOf(p)) })).sort(order);
+    }
     return [row];
   }).sort(order);
 
@@ -122,22 +130,17 @@ export function breakdown({ sample, points, tracked, plugins, start, end, sort }
   return { dsh, programs: programRows, ended: endedRows, endedCount: ended.length };
 }
 
-/** An open row's lines in the order the list shows them: the plugins, the folded ones once opened, then DSH itself and「其他」. */
-export function childLines(row: Row, expanded: ReadonlySet<string>) {
-  const children = row.children ?? [];
-  return [...children.filter(c => !c.quiet), ...expanded.has(foldKey(row.key)) ? row.folded ?? [] : [], ...children.filter(c => c.quiet)];
-}
 /** Every line the list shows now, top to bottom: the drawer's up and down step through them in this order. */
 export function visibleKeys(data: Breakdown, expanded: ReadonlySet<string>, endedOpen: boolean) {
   const keys: string[] = [];
-  for (const r of [...data.dsh, ...data.programs]) { keys.push(r.key); if (expanded.has(r.key)) keys.push(...childLines(r, expanded).map(c => c.key)); }
+  for (const r of [...data.dsh, ...data.programs]) { keys.push(r.key); if (expanded.has(r.key)) keys.push(...(r.children ?? []).map(c => c.key)); }
   if (endedOpen) keys.push(...data.ended.map(r => r.key));
   return keys;
 }
-/** Every row by key, closed and folded ones included, so a drawer shows the same figures as the list. */
+/** Every row by key, closed ones included, so a drawer shows the same figures as the list. */
 export function rowIndex(data: Breakdown) {
   const rows = new Map<string, Row>();
-  const add = (r: Row) => { rows.set(r.key, r); [...r.children ?? [], ...r.folded ?? []].forEach(add); };
+  const add = (r: Row) => { rows.set(r.key, r); r.children?.forEach(add); };
   [...data.dsh, ...data.programs, ...data.ended].forEach(add);
   return rows;
 }

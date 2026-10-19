@@ -45,14 +45,14 @@ let read: Attribution['memory'] = null;
 function split(n: number, agent: number): Attribution {
   if (n >= 30 && (n - 30) % 150 === 0) {
     const k = (n - 30) / 150;
-    read = { at: clock ?? Date.now(), pauseMs: 84, owners: { 'plugin:dsh-quick-translate': .2 * MB, 'plugin:dsh-markdown-notes': (6 + k * 1.5) * MB, 'plugin:dsh-performance': 1.2 * MB,
+    read = { at: clock ?? Date.now(), pauseMs: 84, owners: { 'plugin:dsh-translate': .2 * MB, 'plugin:dsh-markdown-notes': (6 + k * 1.5) * MB, 'plugin:dsh-performance': 1.2 * MB,
       'plugin:dsh-context': 3.1 * MB, core: 48 * MB, gc: 0, other: 6.4 * MB } };
   }
   const notes = n % 50 < 8 ? .5 + noise(n, 11) * .4 : 0;
-  return { state: profiling ? 'running' : 'paused', since: START, startPauseMs: 286, error: null, memory: read, cpu: n === 0 || !profiling ? null : { 'plugin:dsh-quick-translate': 0, 'plugin:dsh-markdown-notes': notes,
+  return { state: profiling ? 'running' : 'paused', since: START, startPauseMs: 286, error: null, memory: read, cpu: n === 0 || !profiling ? null : { 'plugin:dsh-translate': 0, 'plugin:dsh-markdown-notes': notes,
     'plugin:dsh-performance': .03 + noise(n, 12) * .02, 'plugin:dsh-context': .01 + agent * .01, core: .08 + agent * .12, gc: .02 + agent * .02, other: .01 } };
 }
-const PLUGINS = [{ id: 'dsh-quick-translate', label: '快捷翻译', version: '0.2.4' }, { id: 'dsh-markdown-notes', label: 'Markdown 笔记', version: '0.5.2' },
+const PLUGINS = [{ id: 'dsh-translate', label: '翻译', version: '0.2.4' }, { id: 'dsh-markdown-notes', label: 'Markdown 笔记', version: '0.5.2' },
   { id: 'dsh-performance', label: '运行监控', version: '0.7.0' }, { id: 'dsh-context', label: '上下文 (dsh-context)', version: '0.71.0' }];
 const hot = (name: string, where: string, value: number) => ({ name, where, value });
 const DETAIL: Record<string, OwnerDetail> = {

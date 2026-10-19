@@ -1,7 +1,7 @@
 import React, { memo, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { GROUPS, type Group, type Point, type Sample } from './contracts';
-import { bytes, change, clock, clockShort, cpu, duration, gb, span } from './format';
-import { GAP_MS, SLOW_INTERACTION_MS, decimate, firstAt, programTitle, sum, summarize, summarizeResponse } from './insights';
+import { bytes, clock, clockShort, cpu, duration, gb, span } from './format';
+import { GAP_MS, SLOW_INTERACTION_MS, decimate, firstAt, programTitle, sum, summarizeResponse } from './insights';
 import { GROUP_LABEL } from './labels';
 import type { Frame, Interaction, ResponseLog } from './responsiveness';
 import { groupKey, type ProgramRecord } from './tracking';
@@ -68,18 +68,6 @@ function nearest<T extends { time: number }>(items: T[], from: number, to: numbe
   return i > from && time - items[i - 1].time < items[i].time - time ? i - 1 : i;
 }
 
-/** A clock time beside a statistic: pointing at it moves the crosshair to that moment. */
-function Moment({ time, onPeek }: { time: number | null; onPeek(time: number | null): void }) {
-  if (time === null) return null;
-  return <button type="button" className="dpm-moment" aria-label={`在图上查看 ${clock(time)}`} onPointerEnter={() => onPeek(time)} onPointerLeave={() => onPeek(null)}
-    onFocus={() => onPeek(time)} onBlur={() => onPeek(null)}>{clockShort(time)}</button>;
-}
-/** DSH's CPU within the whole machine's: DSH, then the other programs; the rest of the bar is idle. */
-function Meter({ part, whole }: { part: number | null | undefined; whole: number | null | undefined }) {
-  const dsh = Math.max(0, Math.min(100, part ?? 0)), other = Math.max(0, Math.min(100, whole ?? 0) - dsh);
-  return <span className="dpm-meter" aria-hidden="true"><i style={{ width: `${dsh}%` }} /><i style={{ width: `${other}%` }} /></span>;
-}
-
 /**
  * CPU, memory and responsiveness on one time axis, with the programs that started or stopped below: one vertical line runs
  * through all of them, so what happened at one moment reads straight down. Beside each track is its value now and one line
@@ -132,7 +120,7 @@ export const Timeline = memo(function Timeline({ points, response, programs, sam
     });
   }, [programs, view.start, view.end]);
 
-  const s = summarize(points, view.start, view.end), rs = summarizeResponse(frames, interactions, response.spans, view.start, view.end);
+  const rs = summarizeResponse(frames, interactions, response.spans, view.start, view.end);
   const index = at === null ? -1 : nearest(points, from, to, at), pick = index >= 0 && Math.abs(points[index].time - at!) <= GAP_MS / 2 ? points[index] : null;
   const near = (time: number) => Math.abs(x(time) - x(pick?.time ?? at ?? 0)) <= 6;
   const frame = at === null ? undefined : (() => { const i = nearest(frames, fFrom, fTo, at); return i >= 0 && near(frames[i].time) ? frames[i] : undefined; })();
@@ -146,23 +134,21 @@ export const Timeline = memo(function Timeline({ points, response, programs, sam
   const owners = pick?.owners ? Object.entries(pick.owners).filter(([, v]) => v >= OWNER_SHOWN).sort((a, b) => b[1] - a[1]).slice(0, 2) : [];
   const system = sample?.system, supported = response.supported.frames || response.supported.interactions;
 
-  const heads: { key: string; box: { top: number; height: number }; label: string; tip: string; value: string; tone?: 'warn'; lines: React.ReactNode[] }[] = [
-    { key: 'cpu', box: TRACK.cpu, label: 'CPU', value: cpu(sample?.cpu),
-      tip: 'DSH 和它启动的程序占整台电脑算力的比例，所有核心满载为 100%，和任务管理器一致。小条里深色是 DSH，浅色是其他程序。', lines: [
-        <><Meter part={sample?.cpu} whole={system?.cpu} /><span>整机 {cpu(system?.cpu)}</span></>,
-        s.peakCpu !== null && <><span>峰值 {cpu(s.peakCpu)}</span><Moment time={s.peakCpuAt} onPeek={peek} /></>] },
+  // Every track's head reads the same way: what it is, its value, and one line to judge that value by. A peak or a change reads
+  // off the chart beside it, so it is not written here again; the machine's memory in GB shows on pointing at its line.
+  const heads: { key: string; box: { top: number; height: number }; label: string; tip: string; value: string; tone?: 'warn'; line: string | null; detail?: string }[] = [
+    { key: 'cpu', box: TRACK.cpu, label: 'CPU', value: cpu(sample?.cpu), line: system ? `整机 ${cpu(system.cpu)}` : null,
+      tip: 'DSH 和它启动的程序占整台电脑算力的比例，所有核心满载为 100%，和任务管理器一致。「整机」是整台电脑此刻的占用，包括其他程序。' },
     { key: 'memory', box: TRACK.memory, label: '内存', value: bytes(sample?.memory),
-      tip: 'DSH 和它启动的程序独占的物理内存，对应任务管理器「详细信息」里的「内存(专用工作集)」。', lines: [
-        <span>{system ? `整机已用 ${gb(system.memoryUsed)} / ${gb(system.memoryTotal)}` : '整机内存读取不到'}</span>,
-        s.memoryChange !== null && s.since !== null && <span>近 {span(view.end - s.since)} {change(s.memoryChange)}</span>] },
-    { key: 'response', box: TRACK.response, label: '界面响应', value: !supported || !rs.observedMs ? '—' : rs.frames ? `卡顿 ${rs.frames} 次` : '流畅', tone: rs.frames >= 3 ? 'warn' : undefined,
-      tip: `卡顿：DSH 窗口有一帧被拖住超过 50 毫秒，期间画面停住、点了没反应。操作响应：从点击或按键到画面给出反馈的时间，超过 ${SLOW_INTERACTION_MS} 毫秒标红。只在窗口可见时记录，打开本页期间本页自身的绘制也计入。`, lines: [
-        !supported ? <span>当前环境不支持监测</span>
-          : rs.longestFrame !== null ? <><span>最长 {duration(rs.longestFrame)}</span><Moment time={rs.longestFrameAt} onPeek={peek} /></>
-          : <span>{rs.observedMs ? `近 ${span(rs.observedMs)}没有卡顿` : '窗口可见时开始记录'}</span>,
-        rs.slowest !== null && <span>操作响应最慢 {duration(rs.slowest)}</span>] },
+      line: system ? `整机 ${Math.round(system.memoryUsed / system.memoryTotal * 100)}%` : null, detail: system ? `整机已用 ${gb(system.memoryUsed)} / ${gb(system.memoryTotal)}` : undefined,
+      tip: 'DSH 和它启动的程序独占的物理内存，对应任务管理器「详细信息」里的「内存(专用工作集)」。「整机」是整台电脑已用内存的比例。' },
+    { key: 'response', box: TRACK.response, label: '界面响应', value: !supported || !rs.observedMs ? '—' : rs.frames ? `${rs.frames} 次卡顿` : '流畅', tone: rs.frames >= 3 ? 'warn' : undefined,
+      line: !supported ? '当前环境不支持监测' : rs.longestFrame !== null ? `最长 ${duration(rs.longestFrame)}` : rs.observedMs ? `近 ${span(rs.observedMs)}没有卡顿` : '窗口可见时开始记录',
+      tip: `卡顿：DSH 窗口有一帧被拖住超过 50 毫秒，期间画面停住、点了没反应。图上的圆点是操作响应：从点击或按键到画面给出反馈的时间，超过 ${SLOW_INTERACTION_MS} 毫秒标红。只在窗口可见时记录，打开本页期间本页自身的绘制也计入。` },
   ];
   const g = geometry, rp = plot(TRACK.response);
+  // Past the slow-interaction line the scale marks that line, dashed, rather than the half way.
+  const slowLine = g.response.max > SLOW_INTERACTION_MS, msScale = slowLine ? [SLOW_INTERACTION_MS, g.response.max] : [g.response.max / 2, g.response.max];
   const label = pick ? `${clock(pick.time)}，DSH CPU ${total('cpu')}，内存 ${total('memory')}` : '最新读数';
 
   return <section className="dpm-card dpm-timeline" aria-label="趋势" data-stale={stale || undefined}>
@@ -172,7 +158,7 @@ export const Timeline = memo(function Timeline({ points, response, programs, sam
         {heads.map(h => <div key={h.key} className="dpm-head" style={{ top: h.box.top, height: h.box.height }}>
           <span className="dpm-head-label">{h.label}<Tip text={h.tip} label={`${h.label}是怎么算的`} /></span>
           <strong className="dpm-head-value" data-tone={h.tone}><Figure text={h.value} /></strong>
-          {h.lines.map((line, i) => line && <span key={i} className="dpm-head-line">{line}</span>)}
+          {h.line && <span className="dpm-head-line" title={h.detail}>{h.line}</span>}
         </div>)}
         <div className="dpm-head dpm-head-lane" style={{ top: TRACK.lane.top, height: TRACK.lane.height }}>程序启停</div>
       </div>
@@ -192,10 +178,7 @@ export const Timeline = memo(function Timeline({ points, response, programs, sam
           {(['cpu', 'memory'] as const).map(field => {
             const t = g[field], p = plot(TRACK[field]);
             return <g key={field}>
-              {[.5, 1].map(n => <g key={n} className="dpm-grid">
-                <line x1={X} x2={X + plotWidth} y1={t.y(t.max * n)} y2={t.y(t.max * n)} />
-                <text x={X + plotWidth} y={t.y(t.max * n) - 4} textAnchor="end">{field === 'cpu' ? `${+(t.max * n).toFixed(1)}%` : axisBytes(t.max * n)}</text>
-              </g>)}
+              <g className="dpm-grid">{[.5, 1].map(n => <line key={n} x1={X} x2={X + plotWidth} y1={t.y(t.max * n)} y2={t.y(t.max * n)} />)}</g>
               <line className="dpm-base" x1={X} x2={X + plotWidth} y1={p.bottom + .5} y2={p.bottom + .5} />
               <g clipPath="url(#dpm-trend-clip)">
                 {t.areas.map((d, i) => d && <path key={GROUPS[i]} className="dpm-area" data-group={GROUPS[i]} d={d} />)}
@@ -203,12 +186,14 @@ export const Timeline = memo(function Timeline({ points, response, programs, sam
                 {live && t.last && <g key={t.last.time} className="dpm-now"><circle cx={t.last.x} cy={t.last.y} r={6} /><circle cx={t.last.x} cy={t.last.y} r={2.75} /></g>}
                 {pick && pick[field] && <circle className="dpm-marker" cx={x(pick.time)} cy={t.y(sum(pick[field]!))} r={3.5} />}
               </g>
+              {/* The scale sits over the data, haloed, so a line running through it does not hide it. */}
+              <g className="dpm-grid">{[.5, 1].map(n => <text key={n} x={X + plotWidth} y={t.y(t.max * n) - 4} textAnchor="end">
+                {field === 'cpu' ? `${+(t.max * n).toFixed(1)}%` : axisBytes(t.max * n)}</text>)}</g>
               {!t.last && field === 'cpu' && <text className="dpm-empty" x={X + plotWidth / 2} y={(p.top + p.bottom) / 2}>{points.length ? '第二次读数后开始绘制' : '正在收集数据…'}</text>}
             </g>;
           })}
-          {[.5, 1].map(n => <g key={n} className="dpm-grid"><line x1={X} x2={X + plotWidth} y1={g.response.y(g.response.max * n)} y2={g.response.y(g.response.max * n)} />
-            <text x={X + plotWidth} y={g.response.y(g.response.max * n) - 4} textAnchor="end">{axisMs(g.response.max * n)}</text></g>)}
-          {g.response.max > SLOW_INTERACTION_MS && <line className="dpm-threshold" x1={X} x2={X + plotWidth} y1={g.response.y(SLOW_INTERACTION_MS)} y2={g.response.y(SLOW_INTERACTION_MS)} />}
+          <g className="dpm-grid">{(slowLine ? [g.response.max] : msScale).map(v => <line key={v} x1={X} x2={X + plotWidth} y1={g.response.y(v)} y2={g.response.y(v)} />)}</g>
+          {slowLine && <line className="dpm-threshold" x1={X} x2={X + plotWidth} y1={g.response.y(SLOW_INTERACTION_MS)} y2={g.response.y(SLOW_INTERACTION_MS)} />}
           <line className="dpm-base" x1={X} x2={X + plotWidth} y1={rp.bottom + .5} y2={rp.bottom + .5} />
           <g clipPath="url(#dpm-trend-clip)">
             {/* When the window was being watched: a quiet stretch with this line is calm, one without it was not seen. */}
@@ -219,6 +204,7 @@ export const Timeline = memo(function Timeline({ points, response, programs, sam
             {interactions.slice(iFrom, iTo).map((i: Interaction) => <circle key={i.id} className="dpm-tap" data-slow={i.duration >= SLOW_INTERACTION_MS || undefined}
               data-picked={i === interaction || undefined} cx={x(i.time)} cy={g.response.y(i.duration)} r={i.duration >= SLOW_INTERACTION_MS ? 3.25 : 2.25} />)}
           </g>
+          <g className="dpm-grid">{msScale.map(v => <text key={v} x={X + plotWidth} y={g.response.y(v) - 4} textAnchor="end">{axisMs(v)}</text>)}</g>
           {!lanes.length && <text className="dpm-lane-empty" x={X + 4} y={TRACK.lane.top + 31}>这段时间没有程序启动或退出</text>}
           {timeTicks(view.start, view.end).filter(t => x(t) >= X + 18 && x(t) <= X + plotWidth - 18).map(t =>
             <text key={t} className="dpm-tick" x={x(t)} y={H - 6} textAnchor="middle">{clockShort(t)}</text>)}

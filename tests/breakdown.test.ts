@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { breakdown, foldKey, visibleKeys } from '../src/breakdown';
+import { breakdown, idle, visibleKeys } from '../src/breakdown';
 import { pointOf } from '../src/insights';
 import { report } from '../src/report';
 import { Tracker } from '../src/tracking';
@@ -41,25 +41,28 @@ test('DSH is listed by part, busiest first; a part with several processes opens 
   assert.deepEqual(data.dsh.map(r => r.key), ['group:host', 'group:ui', 'group:gpu', 'group:app']);
   const app = data.dsh.find(r => r.key === 'group:app')!;
   assert.equal(app.memory, 98 * MB); assert.deepEqual(app.children!.map(r => r.name), ['主进程', '网络服务']);
+  assert.equal(app.note, '窗口管理、联网与存储 · 2 个进程', 'a part that opens says how many lines it opens into');
   assert.equal(app.children![1].note, '模型请求与联网');
   assert.equal(data.dsh.find(r => r.key === 'group:ui')!.children, undefined, 'one process: nothing to open');
   assert.deepEqual(breakdown({ sample, points, tracked, plugins: PLUGINS, start: 0, end: 60_000, sort: 'memory' }).dsh.map(r => r.key), ['group:ui', 'group:host', 'group:app', 'group:gpu']);
 });
 
-test('the Host opens into its plugins, then DSH itself and「其他」, and the lines add up to the Host; idle plugins fold', () => {
+test('the Host opens into every plugin, then DSH itself and「其他」under a heading of their own; the lines add up to the Host, idle ones greyed, not folded', () => {
   const { sample, points, tracked } = minute(), data = breakdown({ sample, points, tracked, plugins: PLUGINS, start: 0, end: 60_000, sort: 'cpu' }), host = data.dsh[0];
-  assert.deepEqual(host.children!.map(r => r.name), ['笔记', '上下文', '运行监控', 'DSH 自身', '其他']);
+  assert.deepEqual(host.children!.map(r => r.name), ['笔记', '上下文', '运行监控', '主题', 'DSH 自身', '其他']);
   const total = host.children!.reduce((a, r) => a + r.cpu!, 0);
   assert.ok(Math.abs(total - host.cpu!) < 1e-9, `${total} vs ${host.cpu}`);
   assert.ok(Math.abs(host.children!.at(-1)!.cpu! - 1) < 1e-9, '「其他」is garbage collection, other code and the rest');
   assert.equal(host.children![0].memory, 6 * MB, 'a plugin\'s memory is its latest reading');
-  assert.equal(host.children![1].note, '插件 · 自带 1 个程序');
-  assert.equal(host.children![2].note, '插件 · 本插件 · 自带 1 个程序', 'the collector is this plugin\'s helper');
-  assert.ok(host.children!.slice(3).every(r => r.quiet));
-  // A plugin that used nothing waits behind one more toggle, and the drawer's up and down only reach it once that is open.
-  assert.deepEqual(host.folded!.map(r => r.name), ['主题']);
-  assert.ok(!visibleKeys(data, new Set([host.key]), false).includes('owner:plugin:dsh-theme'));
-  assert.deepEqual(visibleKeys(data, new Set([host.key, foldKey(host.key)]), false).slice(0, 7),
+  assert.equal(host.note, '运行 Agent、会话和插件 · 4 个插件');
+  assert.deepEqual(host.children!.map(r => r.heading), ['插件', '插件', '插件', '插件', '不属于插件', '不属于插件']);
+  // A plugin is noted by its package and version; this one is tagged as such.
+  assert.equal(host.children![1].note, 'dsh-context · v0.7.0 · 自带 1 个程序');
+  assert.equal(host.children![2].note, 'dsh-performance · v0.7.0 · 自带 1 个程序', 'the collector is this plugin\'s helper');
+  assert.equal(host.children![2].tag, '本插件');
+  // A plugin that used nothing is listed with the rest, only greyed, so the drawer's up and down reach it as soon as the Host is open.
+  assert.deepEqual(host.children!.filter(idle).map(r => r.name), ['主题']);
+  assert.deepEqual(visibleKeys(data, new Set([host.key]), false).slice(0, 7),
     ['group:host', 'owner:plugin:dsh-notes', 'owner:plugin:dsh-context', 'owner:plugin:dsh-performance', 'owner:plugin:dsh-theme', 'owner:core', 'owner:misc']);
 });
 

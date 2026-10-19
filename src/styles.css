@@ -45,12 +45,16 @@
   --dpm-ease-in: cubic-bezier(.16, 1, .3, 1);
   --dpm-ease-out: cubic-bezier(.4, 0, 1, 1);
   /* Width of the trend's left column, where each track's value sits. */
-  --dpm-heads: 176px;
+  --dpm-heads: 150px;
+  /* Room above the page for window controls. Only macOS draws them over the page; DSH's Windows frame already starts below its
+   * title bar, so the host's own pages add the clearance under darwin only, and so does this page. */
+  --dpm-frame-top: 0px;
   container-type: inline-size; position: relative; display: flex; flex-direction: column; width: 100%; height: 100%; min-height: 0; overflow: hidden;
-  padding-top: var(--dsh-frame-top-clearance, 0px);
+  padding-top: var(--dpm-frame-top);
   color: var(--dpm-fg); background: var(--dpm-bg); font: 13px/1.5 var(--dpm-font); color-scheme: light;
   -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility;
 }
+[data-platform='darwin'] .dpm-root { --dpm-frame-top: var(--dsh-frame-top-clearance, 0px); }
 body[data-ds-dark-theme] .dpm-root {
   color-scheme: dark;
   --dpm-g-ui: #3987e5;
@@ -190,26 +194,22 @@ body[data-ds-dark-theme] .dpm-root {
 .dpm-heads { position: relative; min-width: 0; }
 .dpm-head { position: absolute; left: 0; right: 0; display: flex; flex-direction: column; min-width: 0; padding: 12px 10px 0 20px; }
 .dpm-head-label { display: flex; align-items: center; gap: 3px; font-size: 12px; font-weight: 500; color: var(--dpm-fg-2); }
+/* The explanation mark shows once the pointer is on its track, so three of them do not sit on the page at rest. */
+.dpm-head .dpm-tip-mark { opacity: 0; transition: opacity .15s, color .15s; }
+.dpm-head:hover .dpm-tip-mark, .dpm-head .dpm-tip-mark:focus-visible { opacity: 1; }
 .dpm-head-value { margin: 0 0 3px; font-size: 22px; font-weight: 600; line-height: 1.25; letter-spacing: -.01em; white-space: nowrap; }
 .dpm-head-value small { margin-left: 2px; font-size: 13px; font-weight: 500; letter-spacing: 0; color: var(--dpm-fg-2); }
 .dpm-head-value[data-tone='warn'] { color: var(--dpm-warn-ink); }
-.dpm-head-line { display: flex; align-items: center; gap: 6px; min-width: 0; overflow: hidden; font-size: 12px; line-height: 20px; color: var(--dpm-fg-3); white-space: nowrap; }
-.dpm-head-line > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.dpm-head-line { min-width: 0; overflow: hidden; font-size: 12px; line-height: 18px; color: var(--dpm-fg-3); white-space: nowrap; text-overflow: ellipsis; }
+.dpm-head-line[title] { cursor: help; }
 .dpm-head.dpm-head-lane { justify-content: center; padding-top: 0; font-size: 12px; color: var(--dpm-fg-3); }
-.dpm-meter { flex: none; display: flex; width: 40px; height: 6px; overflow: hidden; border-radius: 3px; background: var(--dpm-hover); }
-.dpm-meter i { flex: none; height: 100%; }
-.dpm-meter i:first-child { background: var(--dpm-fg-2); }
-.dpm-meter i + i { background: var(--dpm-line-2); }
-.dpm-moment {
-  flex: none; height: 18px; padding: 0 5px; border: 0; border-radius: 5px; background: var(--dpm-hover); color: var(--dpm-fg-2); font-size: 11px; line-height: 18px;
-  font-variant-numeric: tabular-nums; cursor: pointer; transition: background-color .15s, color .15s;
-}
-.dpm-moment:hover, .dpm-moment:focus-visible { background: var(--dpm-ink); color: var(--dpm-ink-fg); }
 .dpm-canvas { position: relative; min-width: 0; margin-right: 14px; touch-action: pan-y; cursor: crosshair; }
 .dpm-canvas:focus-visible { outline-offset: -1px; border-radius: 6px; }
 .dpm-canvas svg { display: block; overflow: visible; }
 .dpm-grid line { stroke: var(--dpm-grid); }
 .dpm-grid text, .dpm-tick, .dpm-lane-empty { font-size: 10.5px; fill: var(--dpm-fg-3); font-variant-numeric: tabular-nums; }
+/* The scale is drawn over the data: a halo in the card's colour keeps it legible where a line runs through it. */
+.dpm-grid text { paint-order: stroke; stroke: var(--dpm-bg); stroke-width: 3px; stroke-linejoin: round; }
 .dpm-lane-empty { font-size: 11.5px; }
 .dpm-base { stroke: var(--dpm-line-2); }
 .dpm-area { fill: var(--c); fill-opacity: .22; }
@@ -270,19 +270,30 @@ body[data-ds-dark-theme] .dpm-area { fill-opacity: .3; }
 .dpm-mark[data-mark='slow'] > i { width: 8px; height: 8px; border-radius: 50%; background: var(--dpm-critical); }
 
 /* Who is using it */
-.dpm-card-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 12px; padding: 14px 20px 8px; }
+.dpm-card-head { padding: 14px 20px 8px; }
 .dpm-card-head h2 { margin: 0; font-size: 13px; font-weight: 600; }
-.dpm-hint { font-size: 12px; color: var(--dpm-fg-3); }
-.dpm-table { width: 100%; border-collapse: collapse; table-layout: fixed; font-variant-numeric: tabular-nums; }
-.dpm-table .c-trend { width: 108px; }
-.dpm-table .c-cpu { width: 84px; }
-.dpm-table .c-mem { width: 104px; }
-.dpm-table .c-go { width: 34px; }
-.dpm-table thead th { height: 32px; padding: 0 12px; border-bottom: 1px solid var(--dpm-line); font-size: 12px; font-weight: 500; color: var(--dpm-fg-3); text-align: right; white-space: nowrap; }
+/* `--dpm-row-pad` is where a row's content starts: its caret, then its swatch, and the line its own parts hang from. */
+.dpm-table { --dpm-row-pad: 14px; width: 100%; border-collapse: collapse; table-layout: fixed; font-variant-numeric: tabular-nums; }
+/*
+ * The name, its numbers right beside it, its trend, then what it is in the width that is left: whatever room is spare ends a
+ * line, never sits between a name and its numbers.
+ */
+.dpm-table .c-name { width: 252px; }
+.dpm-table .c-cpu { width: 76px; }
+.dpm-table .c-mem { width: 92px; }
+.dpm-table .c-trend { width: 120px; }
+.dpm-table .c-go { width: 32px; }
+.dpm-table thead th {
+  height: 44px; padding: 9px 12px 0; border-bottom: 1px solid var(--dpm-line); font-size: 12px; font-weight: 500; color: var(--dpm-fg-3); text-align: right;
+  vertical-align: top; white-space: nowrap;
+}
+/* Under a figure's heading, what the figure is: an average over the range, or now. */
+.dpm-table thead th small { display: block; margin-top: 1px; font-size: 11px; font-weight: 400; line-height: 14px; }
 .dpm-table thead th:first-child { padding-left: 20px; text-align: left; }
 .dpm-table thead td { border-bottom: 1px solid var(--dpm-line); }
 .dpm-table thead .dpm-trend-cell { text-align: center; }
-.dpm-sort { display: inline-flex; align-items: center; gap: 2px; margin: 0 -6px; padding: 2px 6px; border: 0; border-radius: 6px; background: transparent; color: inherit; cursor: pointer; transition: background-color .15s, color .15s; }
+.dpm-table thead .dpm-note { text-align: left; }
+.dpm-sort { display: inline-flex; align-items: center; gap: 2px; margin: -2px -6px; padding: 2px 6px; border: 0; border-radius: 6px; background: transparent; color: inherit; cursor: pointer; transition: background-color .15s, color .15s; }
 .dpm-sort:hover { background: var(--dpm-hover); color: var(--dpm-fg); }
 .dpm-sort[aria-pressed='true'] { color: var(--dpm-fg); }
 .dpm-sort .dpm-icon { opacity: 0; transition: opacity .15s; }
@@ -290,13 +301,30 @@ body[data-ds-dark-theme] .dpm-area { fill-opacity: .3; }
 .dpm-section-row th { height: 38px; padding: 12px 12px 4px 20px; font-size: 12px; font-weight: 600; color: var(--dpm-fg-2); text-align: left; vertical-align: bottom; white-space: nowrap; }
 .dpm-section-row th small { margin-left: 8px; font-weight: 400; color: var(--dpm-fg-3); }
 .dpm-row { cursor: pointer; transition: background-color .12s; }
-.dpm-row > * { height: 50px; padding: 0 12px; border-top: 1px solid var(--dpm-line); font-weight: 400; text-align: right; white-space: nowrap; }
-.dpm-row > th { padding-left: 14px; text-align: left; }
+.dpm-row > * { height: 40px; padding: 0 12px; border-top: 1px solid var(--dpm-line); font-weight: 400; text-align: right; white-space: nowrap; }
+.dpm-row > th { padding-left: var(--dpm-row-pad); text-align: left; }
 .dpm-row:hover { background: var(--dpm-bg-2); }
 .dpm-row[data-active] { background: color-mix(in srgb, var(--dpm-select) 42%, var(--dpm-bg)); }
-.dpm-row[data-depth='1'] > * { height: 40px; border-top-color: transparent; }
+/*
+ * A part's own lines carry no mark: they hang under its swatch, on a thin line in its colour. Their dividers are fainter and
+ * start where their names do, so the eye can still follow a line across to its numbers.
+ */
+.dpm-row[data-depth='1'] > * { height: 34px; border-top-color: transparent; }
+.dpm-row[data-depth='1'] > td { box-shadow: inset 0 1px var(--dpm-grid); }
+:is(.dpm-row[data-depth='1'], .dpm-heading) > th { position: relative; }
+:is(.dpm-row[data-depth='1'], .dpm-heading) > th::before {
+  content: ''; position: absolute; top: 0; bottom: 0; left: calc(var(--dpm-row-pad) + 32px); width: 2px; background: color-mix(in srgb, var(--c) 45%, transparent);
+}
+:is(.dpm-row[data-depth='1'], .dpm-heading) > th::after {
+  content: ''; position: absolute; top: 0; right: 0; left: calc(var(--dpm-row-pad) + 58px); height: 1px; background: var(--dpm-grid);
+}
+/* Within an open part, a heading over each kind of line: the Host's plugins, then what is not a plugin. */
+.dpm-heading > th {
+  height: 30px; padding: 0 12px 5px calc(var(--dpm-row-pad) + 58px); font-size: 11.5px; font-weight: 600; color: var(--dpm-fg-2); text-align: left;
+  vertical-align: bottom; white-space: nowrap;
+}
 .dpm-name { display: flex; align-items: center; gap: 8px; min-width: 0; }
-.dpm-row[data-depth='1'] .dpm-name { padding-left: 34px; }
+.dpm-row[data-depth='1'] .dpm-name { padding-left: 58px; }
 .dpm-caret {
   display: inline-grid; place-items: center; flex: none; width: 20px; height: 20px; padding: 0; border: 0; border-radius: 5px;
   background: transparent; color: var(--dpm-fg-3); cursor: pointer; transition: background-color .15s, color .15s;
@@ -306,27 +334,30 @@ body[data-ds-dark-theme] .dpm-area { fill-opacity: .3; }
 .dpm-caret[aria-expanded='true'] .dpm-icon { transform: rotate(90deg); }
 .dpm-caret-space { flex: none; width: 20px; }
 .dpm-swatch { flex: none; width: 10px; height: 10px; border-radius: 3px; background: var(--c); }
-.dpm-row[data-depth='1'] .dpm-swatch { width: 6px; height: 6px; border-radius: 50%; }
-.dpm-row[data-quiet] .dpm-swatch { background: transparent; box-shadow: inset 0 0 0 1.5px var(--c); }
-.dpm-name-button { display: flex; flex-direction: column; align-items: flex-start; min-width: 0; padding: 0; border: 0; background: none; text-align: left; cursor: pointer; }
-.dpm-name-button strong { display: flex; align-items: center; gap: 6px; max-width: 100%; min-width: 0; font-size: 13px; font-weight: 500; }
-.dpm-name-button strong > span:first-child { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-.dpm-name-button small { max-width: 100%; overflow: hidden; font-size: 12px; color: var(--dpm-fg-3); white-space: nowrap; text-overflow: ellipsis; }
-.dpm-row[data-depth='1'] .dpm-name-button { flex-direction: row; align-items: baseline; gap: 8px; }
-.dpm-row[data-depth='1'] .dpm-name-button strong { flex: none; max-width: 60%; font-size: 12.5px; }
-.dpm-row[data-quiet] .dpm-name-button strong { font-weight: 400; color: var(--dpm-fg-2); }
+.dpm-name-button { display: flex; align-items: baseline; gap: 8px; min-width: 0; padding: 0; border: 0; background: none; text-align: left; cursor: pointer; }
+.dpm-name-button strong { min-width: 0; overflow: hidden; font-size: 13px; font-weight: 500; white-space: nowrap; text-overflow: ellipsis; }
+.dpm-row[data-depth='1'] .dpm-name-button strong { font-size: 12.5px; font-weight: 400; }
 .dpm-row[data-ended] .dpm-name-button strong { color: var(--dpm-fg-2); }
+/* A line that barely uses anything recedes rather than folding away: its name and numbers grey, its trend fainter. */
+.dpm-row[data-idle] :is(.dpm-name-button strong, .dpm-num) { color: var(--dpm-fg-3); }
+.dpm-row[data-idle] .dpm-spark { opacity: .5; }
 .dpm-tag { flex: none; padding: 0 6px; border-radius: 4px; background: var(--dpm-hover); font-size: 11px; font-weight: 500; line-height: 18px; color: var(--dpm-fg-2); }
 .dpm-num { font-size: 12.5px; }
+.dpm-row[data-depth='0'] .dpm-num { font-weight: 500; }
 .dpm-num small { margin-right: 3px; font-size: 11.5px; color: var(--dpm-fg-3); }
 .dpm-num[data-muted] { color: var(--dpm-fg-3); }
+/* What a line is: secondary, so it comes last, in the tertiary colour, cut short rather than wrapped. */
+.dpm-note { overflow: hidden; font-size: 12.5px; color: var(--dpm-fg-3); text-overflow: ellipsis; }
+.dpm-row > .dpm-note { text-align: left; }
+.dpm-row[data-depth='1'] > .dpm-note { font-size: 12px; }
 .dpm-row > .dpm-go { padding: 0; color: var(--dpm-fg-3); text-align: center; }
 .dpm-go .dpm-icon { opacity: 0; transform: translateX(-2px); transition: opacity .15s, transform .15s; }
 .dpm-row:hover .dpm-go .dpm-icon, .dpm-row[data-active] .dpm-go .dpm-icon { opacity: 1; transform: none; }
 .dpm-spark { display: block; margin: 0 auto; overflow: visible; }
 .dpm-spark-area { fill: var(--c); fill-opacity: .14; }
 .dpm-spark-line { fill: none; stroke: var(--c); stroke-width: 1.5; stroke-linejoin: round; stroke-linecap: round; vector-effect: non-scaling-stroke; }
-.dpm-fold-row td { height: 34px; padding: 0 12px 0 48px; }
+/* A part's own lines draw their trend as a line only, so the parts themselves carry the weight. */
+.dpm-row[data-depth='1'] .dpm-spark-area { display: none; }
 .dpm-ended-row td { height: 44px; padding: 0 12px 0 14px; border-top: 1px solid var(--dpm-line); }
 .dpm-disclosure {
   display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 8px 0 4px; border: 0; border-radius: 6px; background: transparent;
@@ -344,7 +375,7 @@ body[data-ds-dark-theme] .dpm-area { fill-opacity: .3; }
 .dpm-scrim { position: absolute; inset: 0; background: var(--dpm-mask); opacity: 0; transition: opacity .28s; }
 .dpm-layer[data-open] .dpm-scrim { opacity: 1; }
 .dpm-drawer {
-  position: absolute; top: calc(var(--dsh-frame-top-clearance, 0px) + 8px); right: 8px; bottom: 8px; display: flex; flex-direction: column; width: min(540px, calc(100% - 16px));
+  position: absolute; top: calc(var(--dpm-frame-top) + 8px); right: 8px; bottom: 8px; display: flex; flex-direction: column; width: min(540px, calc(100% - 16px));
   overflow: hidden; border: 1px solid var(--dpm-line); border-radius: 14px; background: var(--dpm-overlay);
   box-shadow: 0 28px 72px -24px rgba(0, 0, 0, .38), 0 2px 10px var(--dpm-mask);
   transform: translateX(calc(100% + 24px)); visibility: hidden; transition: transform .26s var(--dpm-ease-out), visibility 0s .26s;
@@ -470,13 +501,14 @@ body[data-ds-dark-theme] .dpm-area { fill-opacity: .3; }
 
 /* Narrow panels */
 @container (max-width: 880px) {
-  .dpm-root { --dpm-heads: 140px; }
+  .dpm-root { --dpm-heads: 136px; }
   .dpm-bar { padding: 0 10px 0 18px; }
   .dpm-content { padding: 2px 6px 24px; }
   .dpm-head { padding-left: 16px; }
   .dpm-head-value { font-size: 19px; }
+  /* A hidden column keeps its cells, so the cells after it stay in their own columns. */
   .dpm-table .c-trend { width: 0; }
-  .dpm-trend-cell { display: none; }
+  .dpm-table .dpm-trend-cell { padding: 0; visibility: hidden; }
   .dpm-report-label { display: none; }
 }
 @container (max-width: 600px) {
@@ -486,22 +518,23 @@ body[data-ds-dark-theme] .dpm-area { fill-opacity: .3; }
   .dpm-segmented button { padding: 0 8px; font-size: 12px; }
   .dpm-head { padding: 10px 6px 0 14px; }
   .dpm-head-value { font-size: 16px; }
-  .dpm-meter, .dpm-head-line .dpm-moment { display: none; }
   .dpm-canvas { margin-right: 8px; }
   .dpm-legend { padding-left: 8px; }
+  .dpm-table .c-name { width: auto; }
   .dpm-table .c-cpu { width: 62px; }
   .dpm-table .c-mem { width: 80px; }
+  .dpm-table .c-note { width: 0; }
   .dpm-table .c-go { width: 8px; }
   .dpm-go .dpm-icon { display: none; }
+  .dpm-table { --dpm-row-pad: 8px; }
   .dpm-row > * { padding: 0 6px; }
-  .dpm-row > th { padding-left: 8px; }
-  .dpm-table thead th { padding: 0 6px; }
+  .dpm-table thead th { height: 32px; padding: 7px 6px 0; }
   .dpm-table thead th:first-child, .dpm-section-row th { padding-left: 14px; }
-  .dpm-row[data-depth='1'] .dpm-name { padding-left: 22px; }
-  .dpm-row[data-depth='1'] .dpm-name-button small { display: none; }
+  .dpm-table thead th small { display: none; }
+  .dpm-table .dpm-note { padding: 0; visibility: hidden; }
   .dpm-verdict:is([data-level='warn'], [data-level='info']) { flex-wrap: wrap; }
   .dpm-verdict-actions { width: 100%; padding-left: 42px; }
-  .dpm-drawer { top: var(--dsh-frame-top-clearance, 0px); right: 0; bottom: 0; width: 100%; border: 0; border-radius: 0; }
+  .dpm-drawer { top: var(--dpm-frame-top); right: 0; bottom: 0; width: 100%; border: 0; border-radius: 0; }
   .dpm-drawer-content { padding: 2px 6px 20px; }
 }
 
