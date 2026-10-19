@@ -74,6 +74,7 @@ test('a tool process whose executable ships inside a plugin is that plugin\'s', 
   const plugins = [{ id: 'dsh-ocr', dir: join('/profile', 'node_modules', 'dsh-ocr') }];
   const next = raw(); next.processes[4] = { ...next.processes[4], image: join('/profile', 'node_modules', 'dsh-ocr', 'bin', 'ocr.exe') };
   assert.equal(calculate(next, undefined, plugins).processes[4].plugin, 'dsh-ocr');
+  assert.equal(calculate(next, undefined, plugins).processes[4].path, join('/profile', 'node_modules', 'dsh-ocr', 'bin', 'ocr.exe'), 'the executable is shown in its details');
   assert.equal(calculate(raw(), undefined, plugins).processes[4].plugin, null);
   assert.equal(calculate(next).processes[0].plugin, undefined);
   assert.equal(pluginOf(join('/profile', 'node_modules', 'dsh-ocr-extra', 'x.exe'), plugins), null, 'a sibling folder with the same prefix is not the plugin');
@@ -89,16 +90,26 @@ test('Host API only accepts fixed actions, never client-selected PIDs or command
   assert.match(await (await failed(request({ action: 'sample' }))).text(), /采集不可用/);
 });
 
-test('profiling is an explicit opt-in action and never accepts arbitrary commands', async () => {
-  const calls: boolean[] = [];
-  const handle = createHandler({ sampler: { async sample() { return calculate(raw()); } }, profiler: {
-    async enable() { calls.push(true); }, disable() { calls.push(false); }, detail() { return { cpu: [], memory: [], memoryAt: null }; },
-  } });
-  const post = (body: unknown) => handle(new Request('http://localhost/x', { method: 'POST', body: JSON.stringify(body) }));
-  assert.equal((await post({ action: 'profiling', enabled: true })).status, 200);
-  assert.equal((await post({ action: 'profiling', enabled: false })).status, 200);
-  assert.deepEqual(calls, [true, false]);
+/** A profiler stand-in: it records the page's pause and resume, and answers owner queries with what it is given. */
+function fakeProfiler(detail = (_id: string, _from: number, _to: number) => ({ cpu: [] as { name: string; where: string; value: number }[], memory: [], memoryAt: null })) {
+  const calls: string[] = [];
+  let state: 'running' | 'paused' = 'running';
+  return { calls, profiler: {
+    async start() { calls.push('start'); state = 'running'; }, pause() { calls.push('pause'); state = 'paused'; },
+    status() { return { state, memory: null, since: null, startPauseMs: null, error: null }; }, detail,
+  } };
+}
+
+test('the profiler runs on its own; the page can only pause and resume it', async () => {
+  const { calls, profiler } = fakeProfiler();
+  const handle = createHandler({ sampler: { async sample() { return calculate(raw()); } }, profiler });
+  const post = async (body: unknown) => { const r = await handle(new Request('http://localhost/x', { method: 'POST', body: JSON.stringify(body) })); return { status: r.status, body: await r.json() }; };
+  assert.deepEqual((await post({ action: 'profiling', enabled: false })).body.data, { state: 'paused' });
+  assert.deepEqual((await post({ action: 'profiling', enabled: true })).body.data, { state: 'running' });
+  assert.deepEqual(calls, ['pause', 'start']);
   assert.equal((await post({ action: 'profiling', enabled: 'yes' })).status, 400);
+  assert.equal((await post({ action: 'sample' })).body.data.processes.length, 5);
+  assert.deepEqual(calls, ['pause', 'start'], 'a reading never switches the profiler');
 });
 
 test('the machine share comes from the same interval: busy CPU and physical memory in use', () => {
@@ -111,7 +122,7 @@ test('the machine share comes from the same interval: busy CPU and physical memo
 
 test('the owner query takes an id and a range only; the plugin list carries no paths', async () => {
   const asked: unknown[][] = [];
-  const profiler = { detail(id: string, from: number, to: number) { asked.push([id, from, to]); return { cpu: [{ name: 'render', where: 'lib/host.js:4', value: 12 }], memory: [], memoryAt: null }; } };
+  const { profiler } = fakeProfiler((id, from, to) => { asked.push([id, from, to]); return { cpu: [{ name: 'render', where: 'lib/host.js:4', value: 12 }], memory: [], memoryAt: null }; });
   const catalog = { async list() { return [{ id: 'dsh-a', label: 'A', version: '1.0.0', dir: '/secret/path' }]; } };
   const handle = createHandler({ sampler: { async sample() { return calculate(raw()); } }, profiler, catalog });
   const post = async (body: unknown) => { const r = await handle(new Request('http://localhost/x', { method: 'POST', body: JSON.stringify(body) })); return { status: r.status, body: await r.json() }; };

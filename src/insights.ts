@@ -76,19 +76,39 @@ export function summarize(points: Point[], start: number, end: number): Summary 
   };
 }
 
-/** Each owner's share of the machine over the range, time weighted like the CPU average; null before any split arrived. */
-export function ownerAverages(points: Point[], start: number, end: number): Record<string, number> | null {
-  const sums: Record<string, number> = {};
+/** The part of a reading's interval inside the range: an interval crossing the start counts in part. */
+const weightOf = (p: Point, start: number) => p.cpu ? p.time - Math.max(start, p.time - p.intervalMs!) : 0;
+/** Each group's CPU over the range in GROUPS order, time weighted like the average above; null before any CPU reading. */
+export function groupAverages(points: Point[], start: number, end: number): number[] | null {
+  const sums = GROUPS.map(() => 0);
   let weight = 0;
   for (let i = firstAt(points, start); i < points.length && points[i].time <= end; i++) {
-    const p = points[i], ms = p.owners && p.intervalMs !== null ? p.time - Math.max(start, p.time - p.intervalMs) : 0;
+    const p = points[i], ms = weightOf(p, start);
     if (ms <= 0) continue;
-    for (const id in p.owners) sums[id] = (sums[id] ?? 0) + p.owners![id] * ms;
+    p.cpu!.forEach((v, g) => { sums[g] += v * ms; });
     weight += ms;
   }
+  return weight ? sums.map(v => v / weight) : null;
+}
+const HOST = GROUPS.indexOf('host');
+/**
+ * The Host's CPU over the range and its parts: each owner of its main thread, and the rest (its other threads, and readings
+ * that carry no split). All over the same readings, time weighted, so the parts add up to the whole.
+ */
+export function hostSplit(points: Point[], start: number, end: number): { total: number; owners: Record<string, number>; rest: number } | null {
+  const owners: Record<string, number> = {};
+  let weight = 0, total = 0, rest = 0;
+  for (let i = firstAt(points, start); i < points.length && points[i].time <= end; i++) {
+    const p = points[i], ms = weightOf(p, start);
+    if (ms <= 0) continue;
+    let split = 0;
+    for (const id in p.owners) { owners[id] = (owners[id] ?? 0) + p.owners[id] * ms; split += p.owners[id]; }
+    // The sampling profiler counts a thread blocked in a system call as busy; that can exceed the CPU the process used.
+    total += p.cpu![HOST] * ms; rest += Math.max(0, p.cpu![HOST] - split) * ms; weight += ms;
+  }
   if (!weight) return null;
-  for (const id in sums) sums[id] /= weight;
-  return sums;
+  for (const id in owners) owners[id] /= weight;
+  return { total: total / weight, owners, rest: rest / weight };
 }
 
 /** Interactions slower than this feel sluggish; the same line web vitals draw for a good INP. */
@@ -126,8 +146,22 @@ export function commandSummary(command: string | null) {
   }).join(' ');
 }
 
-/** A program the Host started, with everything it started in turn; `lead` is the process that names it. */
-export interface Program { key: string; lead: ProcessMetric; members: ProcessMetric[]; cpu: number | null; memory: number | null; plugin: string | null }
+/**
+ * A program's name with what it runs, short enough for a sentence: `Node.js（vite.js）`, `Git（status）`. Only a plain word
+ * qualifies (a script, module or subcommand), never a URL or value that might carry a token.
+ */
+export function programTitle(name: string, summary: string) {
+  const what = summary.split(' ').find(token => token && !/^[-/]/.test(token));
+  return what && /^[\w.@-]{1,40}$/.test(what) ? `${name}（${what}）` : name;
+}
+
+/** Shells name a program only when nothing else runs in them: a terminal running a dev server is that server. */
+const SHELLS = /^(pwsh|powershell|cmd|bash|sh|zsh|fish|nu)\.exe$/i;
+/**
+ * A program the Host started, with everything it started in turn. `lead` is the process that names it: the first that is
+ * neither a runner nor a console host nor, when something else runs in it, a shell; `shell` is the shell it runs in, if any.
+ */
+export interface Program { key: string; lead: ProcessMetric; shell: ProcessMetric | null; members: ProcessMetric[]; cpu: number | null; memory: number | null; plugin: string | null }
 export function programs(processes: ProcessMetric[]): Program[] {
   const tools = processes.filter(p => p.kind === 'tool'), byPid = new Map(tools.map(p => [p.pid, p])), children = new Map<number, ProcessMetric[]>();
   for (const p of tools) if (byPid.has(p.parent)) children.set(p.parent, [...children.get(p.parent) ?? [], p]);
@@ -136,8 +170,9 @@ export function programs(processes: ProcessMetric[]): Program[] {
     const visit = (p: ProcessMetric) => { members.push(p); (children.get(p.pid) ?? []).sort((a, b) => a.created - b.created).forEach(visit); };
     visit(top);
     const cpus = members.flatMap(p => p.cpu === null ? [] : [p.cpu]), memories = members.flatMap(p => p.memory === null ? [] : [p.memory]);
-    const lead = members.find(p => !WRAPPERS.test(p.name)) ?? top;
-    return { key: keyOf(top), lead, members, cpu: cpus.length ? sum(cpus) : null, memory: memories.length ? sum(memories) : null, plugin: top.plugin ?? lead.plugin ?? null };
+    const lead = members.find(p => !WRAPPERS.test(p.name) && !SHELLS.test(p.name)) ?? members.find(p => !WRAPPERS.test(p.name)) ?? top;
+    const shell = SHELLS.test(lead.name) ? null : members.find(p => SHELLS.test(p.name)) ?? null;
+    return { key: keyOf(top), lead, shell, members, cpu: cpus.length ? sum(cpus) : null, memory: memories.length ? sum(memories) : null, plugin: top.plugin ?? lead.plugin ?? null };
   });
 }
 

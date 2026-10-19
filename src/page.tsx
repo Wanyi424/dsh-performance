@@ -1,95 +1,104 @@
-import React, { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { call } from './api';
-import { CADENCE, PROFILER, type Group, type PluginInfo } from './contracts';
+import { breakdown, rowIndex, visibleKeys } from './breakdown';
+import { Conclusion } from './conclusion';
+import { CADENCE, type Group, type PluginInfo } from './contracts';
 import type { Controller } from './controller';
-import { Details } from './details';
-import { ms, span } from './format';
-import { Alert, Info, Refresh } from './icons';
+import type { View } from './details';
+import { Drawer } from './drawer';
+import { span } from './format';
+import { Help, Report } from './icons';
+import type { SortKey } from './insights';
 import { ownerName } from './labels';
-import { Now } from './now';
-import { OwnerDetails } from './owner';
-import { PluginSection } from './plugin-section';
-import { Processes } from './processes';
+import { report } from './report';
 import { Timeline } from './timeline';
-import { Dialog, Segmented, useStored } from './ui';
+import { groupKey } from './tracking';
+import { Segmented, copyText, useStored } from './ui';
+import { UsageList } from './usage';
+import { assess } from './verdict';
 import css from './styles.css';
 
 const RANGES = [{ value: '5m', label: '5 分钟', ms: 300_000 }, { value: '15m', label: '15 分钟', ms: 900_000 }, { value: '1h', label: '1 小时', ms: 3_600_000 }] as const;
 type Range = typeof RANGES[number]['value'];
 
+/**
+ * The details page, one column read top down: the conclusion, the linked trend, and who uses what. Anything opens its details
+ * in a drawer over the page, so the page stays where it was and closing the drawer returns to the same line.
+ */
 export function Page({ controller: c }: { controller: Controller }) {
   const s = useSyncExternalStore(c.subscribe, c.snapshot);
   useEffect(() => c.attach(true), [c]);
-  useEffect(() => {
-    let live = true;
-    const sync = () => {
-      if (!live) return;
-      void call('profiling', { enabled: !document.hidden }).catch(() => {});
-    };
-    sync();
-    document.addEventListener('visibilitychange', sync);
-    return () => {
-      live = false;
-      document.removeEventListener('visibilitychange', sync);
-      void call('profiling', { enabled: false }).catch(() => {});
-    };
-  }, []);
-  const root = useRef<HTMLDivElement>(null);
+  const root = useRef<HTMLDivElement>(null), bar = useRef<HTMLElement>(null), scroller = useRef<HTMLDivElement>(null);
   const [range, setRange] = useStored<Range>('range', '15m', RANGES.map(r => r.value));
-  const [about, setAbout] = useState(false), [open, setOpen] = useState<string | null>(null), [plugins, setPlugins] = useState<PluginInfo[]>([]);
-  useEffect(() => { void call<PluginInfo[]>('plugins').then(setPlugins, () => {}); }, []);
-  // Pointing at a component anywhere (the share bar, the legend, a process row) highlights it in every chart. It is a style
-  // on the root, not React state, so the charts do not re-render for it.
+  const [sort, setSort] = useStored<SortKey>('sort', 'cpu', ['cpu', 'memory']);
+  const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set([groupKey('host')])), [endedOpen, setEndedOpen] = useState(false);
+  const [drawer, setDrawer] = useState<{ open: boolean; stack: string[] }>({ open: false, stack: [] });
+  const [plugins, setPlugins] = useState<PluginInfo[]>([]), [toast, setToast] = useState<{ id: number; text: string; note: string } | null>(null);
+  const sample = s.sample, current = RANGES.find(r => r.value === range)!, end = Date.now(), start = end - current.ms;
+
+  // A plugin installed while the page is open shows up in the split before the list knows its name.
+  const unknown = Object.keys(sample?.attribution?.cpu ?? {}).some(id => id.startsWith('plugin:') && !plugins.some(p => `plugin:${p.id}` === id));
+  useEffect(() => { void call<PluginInfo[]>('plugins').then(setPlugins, () => {}); }, [unknown]);
+  useEffect(() => { if (!toast) return; const timer = setTimeout(() => setToast(null), 2800); return () => clearTimeout(timer); }, [toast]);
+
+  // Pointing at a part anywhere (legend, list) lifts it in the charts. It is a style on the root, so nothing re-renders.
   const focus = useCallback((group: Group | null) => { const el = root.current; if (!el) return; if (group) el.dataset.focus = group; else delete el.dataset.focus; }, []);
-  const show = useCallback((key: string) => { focus(null); setOpen(key); }, [focus]);
   const name = useCallback((id: string) => ownerName(id, plugins), [plugins]);
-  const sample = s.sample, end = Date.now(), start = end - RANGES.find(r => r.value === range)!.ms, stale = !!s.error, split = sample?.attribution;
+  const verdict = useMemo(() => assess(s.points, sample, s.response.frames, Date.now()), [s]);
+  const data = useMemo(() => breakdown({ sample, points: s.points, tracked: s.tracked, plugins, start, end, sort }), [s, plugins, range, sort]);
+  const rows = useMemo(() => rowIndex(data), [data]), order = useMemo(() => visibleKeys(data, expanded, endedOpen), [data, expanded, endedOpen]);
+  const view: View = { sample, points: s.points, response: s.response, tracked: s.tracked, plugins, start, end, rangeLabel: current.label, rows };
+
+  // From the page a drawer opens afresh; from inside the drawer it goes one level deeper, and「返回」comes back up.
+  const opener = useRef<HTMLElement | null>(null), isOpen = useRef(false);
+  const open = useCallback((key: string) => {
+    focus(null);
+    if (!isOpen.current) opener.current = document.activeElement as HTMLElement | null;
+    setDrawer({ open: true, stack: [key] });
+  }, [focus]);
+  const deeper = useCallback((key: string) => setDrawer(d => ({ open: true, stack: [...d.stack, key] })), []);
+  const close = useCallback(() => setDrawer(d => ({ ...d, open: false })), []);
+  const back = useCallback(() => setDrawer(d => d.stack.length > 1 ? { ...d, stack: d.stack.slice(0, -1) } : d), []);
+  const step = useCallback((by: 1 | -1) => setDrawer(d => { const next = order[order.indexOf(d.stack[0]) + by]; return next && order.includes(d.stack[0]) ? { open: true, stack: [next] } : d; }), [order]);
+  const toggle = useCallback((key: string) => setExpanded(set => { const next = new Set(set); if (!next.delete(key)) next.add(key); return next; }), []);
+  // While the drawer is open the page beneath is out of reach; closing it hands focus back to what opened it.
+  useEffect(() => {
+    isOpen.current = drawer.open;
+    for (const el of [bar.current, scroller.current]) if (el) { if (drawer.open) el.setAttribute('inert', ''); else el.removeAttribute('inert'); }
+    if (!drawer.open && opener.current) { opener.current.focus({ preventScroll: true }); opener.current = null; }
+  }, [drawer.open]);
+
+  const copy = () => void copyText(report({ now: Date.now(), rangeMs: current.ms, rangeLabel: current.label, sample, points: s.points, response: s.response, verdict, rows: data, plugins })).then(
+    () => setToast({ id: Date.now(), text: '已复制诊断报告', note: '只列程序名，不含命令行和文件路径，可以直接粘贴到反馈里' }),
+    () => setToast({ id: Date.now(), text: '复制失败', note: '请再试一次' }));
+  const stale = !!s.error;
 
   return <div ref={root} className="dpm-root"><style>{css}</style>
-    <header className="dpm-bar">
+    <header ref={bar} className="dpm-bar">
       <h1>运行监控</h1>
-      {!stale && <span className="dpm-status" data-state={sample ? 'live' : 'connecting'}><i key={sample?.time} />{sample ? `实时 · 每 ${CADENCE.page / 1000} 秒更新` : '正在连接…'}</span>}
+      <span className="dpm-live" data-state={stale ? 'paused' : sample ? 'live' : 'connecting'}><i key={sample?.time} />
+        {stale ? '已暂停更新' : sample ? `实时 · 每 ${CADENCE.page / 1000} 秒` : '正在连接…'}</span>
+      <span className="dpm-spacer" />
       <Segmented label="时间范围" value={range} options={RANGES.map(({ value, label }) => ({ value, label }))} onChange={setRange} />
+      <button type="button" className="dpm-button" aria-label="复制诊断报告" title="复制诊断报告" disabled={!sample} onClick={copy}><Report size={14} /><span className="dpm-report-label">复制诊断报告</span></button>
+      <button type="button" className="dpm-icon-button" aria-label="这些数字怎么来的" title="这些数字怎么来的" onClick={() => open('about')}><Help /></button>
     </header>
-    <div className="dpm-scroll"><main className="dpm-content">
-      {s.error && <div className="dpm-banner" role="alert"><Alert /><p><strong>{s.error}</strong><span>数据暂停更新，{CADENCE.failed / 1000} 秒后自动重试。</span></p>
-        <button type="button" className="dpm-button" onClick={c.retry}><Refresh />重试</button></div>}
-      <div className="dpm-stage" data-stale={stale || undefined}>
-        <Now sample={sample} onFocus={focus} onOpen={show} />
-        <Timeline points={s.points} response={s.response} programs={s.tracked.programs} start={start} end={end} ownerName={name} onFocus={focus} />
-      </div>
-      <Processes sample={sample} tracked={s.tracked} start={start} end={end} stale={stale} plugins={plugins} onFocus={focus} onOpen={show} />
-      <PluginSection plugins={plugins} sample={sample} points={s.points} tracked={s.tracked} start={start} end={end} stale={stale} onFocus={focus} onOpen={show} />
-      <footer className="dpm-foot">
-        <button type="button" className="dpm-link" onClick={() => setAbout(true)}><Info />统计口径</button>
-        {sample && <span>DSH 已运行 {span(sample.time - sample.started)}</span>}
-        {sample && sample.memory === null && <span data-tone="warn">当前 Windows 版本不提供专用工作集，内存无法显示</span>}
-      </footer>
-    </main></div>
-    {open && (open.startsWith('owner:')
-      ? <OwnerDetails id={open.slice(6)} plugins={plugins} sample={sample} tracked={s.tracked} start={start} end={end} onClose={() => setOpen(null)} />
-      : <Details id={open} sample={sample} tracked={s.tracked} start={start} end={end} onClose={() => setOpen(null)} />)}
-    {about && <Dialog title="统计口径" onClose={() => setAbout(false)}>
-      <dl className="dpm-about">
-        <dt>统计范围</dt>
-        <dd>DSH 桌面的主进程、界面渲染、GPU、网络等服务和后台服务，以及后台启动的全部程序：终端、Agent 执行的命令、MCP 服务等。父进程已经退出的程序无法确认来源，不计入。</dd>
-        <dt>CPU</dt>
-        <dd>占整台电脑算力的比例{sample ? `，${sample.cores} 个逻辑处理器全部满载为 100%` : ''}，与任务管理器一致。平均值按时间加权。「整机」是同一时段内所有程序合计的 CPU 使用率。</dd>
-        <dt>内存</dt>
-        <dd>专用工作集，即进程独占的物理内存，与任务管理器「详细信息」页的「内存(专用工作集)」一致。「整机」是已使用的物理内存（总量减去可用）。</dd>
-        <dt>插件占用为什么可能很小</dt>
-        <dd>插件归属只覆盖 DSH Host 的后台 JavaScript 主线程和 V8 抽样堆。插件页面运行在 DSH 共用的 Renderer，图片、DOM、SVG、Chromium 缓存以及 GPU 资源无法可靠归属到某个插件，因此不会显示在插件行里；它们仍会计入 DSH 的 Renderer 或 GPU 总量。</dd>
-        <dt>界面响应</dt>
-        <dd>卡顿：DSH 窗口有一帧被拖延超过 50 毫秒，期间画面停住、无法响应输入。交互延迟：从点击或按键到界面画出反馈的时间，超过 200 毫秒会明显感到迟钝。只在窗口可见时记录；打开本页期间，本页自身的绘制也会计入。</dd>
-        <dt>插件占用</dt>
-        <dd>插件都运行在 DSH 后台进程里，系统无法分开计量，因此只有打开本页且窗口可见时才按需启动后台采样：每 {PROFILER.sampleMs} 毫秒记录一次主线程的调用栈，每个样本归到调用栈上离它最近的插件代码，没有插件代码就算作 DSH 内核。插件触发、但由 DSH 稍后异步完成的工作没有插件的调用栈，会算进 DSH 内核；文件和网络读写不在主线程，不计入；界面部分不在统计范围内。内存从采样启动起每分配约 {PROFILER.heapBytes / 1024} KB 抽样记录一次，每 {PROFILER.memoryEveryMs / 60_000} 分钟读取一次各插件分配、目前仍占用的部分；采样停止后不再保留新的归属数据。插件自带的程序按所在目录归属，实时统计。</dd>
-        <dt>程序启停</dt>
-        <dd>根据每次读数推断：启动时间取进程自身的创建时间，退出时间是最后一次看到它运行的时刻。窗口不可见期间不采样，期间启动又退出的程序不会出现。</dd>
-        <dt>数据保留</dt>
-        <dd>最近 1 小时，只保存在内存中，不写入磁盘、不上传，关闭 DSH 后清空。进程趋势按 15 秒汇总。窗口不可见时暂停采集，图上留出空档。</dd>
-        <dt>采集开销</dt>
-        <dd>由一个独立的小程序按需读取进程信息，闲置 15 秒后自动退出；它的占用显示在「插件」分区「运行监控」一行的自带进程中，不计入 DSH 合计。插件归属采样仅在本页可见时按需运行，离开本页或窗口隐藏后立即停止；启动采样要扫描一遍后台的内存{split?.startPauseMs != null ? `，本次启动时后台停顿 ${ms(split.startPauseMs)}` : ''}，读取内存前要做一次完整的垃圾回收{split?.memory ? `，最近一次后台停顿 ${ms(split.memory.pauseMs)}` : ''}。停顿只发生在后台，界面不受影响。</dd>
-      </dl>
-    </Dialog>}
+    <div ref={scroller} className="dpm-scroll" onScroll={event => { const el = root.current; if (el) { if (event.currentTarget.scrollTop > 2) el.dataset.scrolled = ''; else delete el.dataset.scrolled; } }}>
+      <main className="dpm-content">
+        <Conclusion verdict={verdict} error={s.error} onRetry={c.retry} onOpen={open} onRules={() => open('about')} />
+        <Timeline points={s.points} response={s.response} programs={s.tracked.programs} sample={sample} start={start} end={end} rangeLabel={current.label} stale={stale}
+          ownerName={name} onOpen={open} onFocus={focus} />
+        <UsageList data={data} ready={!!sample} sort={sort} onSort={setSort} start={start} end={end} rangeLabel={current.label} expanded={expanded} onToggle={toggle}
+          endedOpen={endedOpen} onEnded={() => setEndedOpen(v => !v)} active={drawer.open ? drawer.stack[0] : null} stale={stale} onOpen={open} onFocus={focus} />
+        <footer className="dpm-foot">
+          {sample && <span>DSH 已运行 {span(sample.time - sample.started)}</span>}
+          {!!sample?.unavailable && <span data-tone="warn">{sample.unavailable} 个进程没有读取权限，未计入</span>}
+          {sample && sample.memory === null && <span data-tone="warn">当前 Windows 版本不提供专用工作集，内存无法显示</span>}
+          <span>数据只保存在内存里，保留最近 1 小时</span>
+        </footer>
+      </main>
+    </div>
+    <Drawer open={drawer.open} stack={drawer.stack} view={view} order={order} onClose={close} onBack={back} onNav={step} onOpen={deeper} />
+    {toast && <div key={toast.id} className="dpm-toast" role="status">{toast.text}<small>{toast.note}</small></div>}
   </div>;
 }

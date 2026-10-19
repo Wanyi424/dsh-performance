@@ -1,22 +1,5 @@
-import React, { useEffect, useId, useRef, useState } from 'react';
-import { Close } from './icons';
-
-/**
- * Native modal dialog: focus trap, Esc and top layer come from the browser. Esc, the backdrop and the close button play the
- * exit animation before `onClose`.
- */
-export function Dialog({ title, lead, className = '', onClose, children }: { title: string; lead?: React.ReactNode; className?: string; onClose(): void; children: React.ReactNode }) {
-  const ref = useRef<HTMLDialogElement>(null), id = useId(), [leaving, setLeaving] = useState(false);
-  const dismiss = () => setLeaving(true);
-  useEffect(() => { const dialog = ref.current!; dialog.showModal(); return () => dialog.close(); }, []);
-  return <dialog ref={ref} className={`dpm-dialog ${className}`} aria-labelledby={id} data-leaving={leaving || undefined}
-    onCancel={event => { event.preventDefault(); dismiss(); }}
-    onClick={event => { if (event.target === event.currentTarget) dismiss(); }}
-    onAnimationEnd={event => { if (leaving && event.target === event.currentTarget && !event.pseudoElement) onClose(); }}>
-    <header>{lead}<h2 id={id}>{title}</h2><button type="button" className="dpm-icon-button" aria-label="关闭" title="关闭" onClick={dismiss}><Close /></button></header>
-    <div className="dpm-dialog-body">{children}</div>
-  </dialog>;
-}
+import React, { useId, useRef, useState } from 'react';
+import { Info } from './icons';
 
 export function Segmented<T extends string>({ value, options, onChange, label }: {
   value: T; options: { value: T; label: string }[]; onChange(value: T): void; label: string;
@@ -27,6 +10,32 @@ export function Segmented<T extends string>({ value, options, onChange, label }:
     {options.map(option => <button key={option.value} type="button" aria-pressed={option.value === value}
       onClick={() => { if (option.value !== value) onChange(option.value); }}>{option.label}</button>)}
   </div>;
+}
+
+/** A term explained where it appears: the mark shows a short note on hover or keyboard focus, and reads it to a screen reader. */
+export function Tip({ text, label, align = 'start' }: { text: string; label: string; align?: 'start' | 'end' }) {
+  const id = useId();
+  return <span className="dpm-tip" data-align={align}>
+    <button type="button" className="dpm-tip-mark" aria-label={label} aria-describedby={id}><Info size={13} /></button>
+    <span role="tooltip" id={id}>{text}</span>
+  </span>;
+}
+
+/** A big number with its unit set smaller: `1.02` `GB`, `2.1` `%`. */
+export function Figure({ text }: { text: string }) {
+  const parts = /^([<\d.,±+−-]+)\s*(.*)$/.exec(text);
+  return parts ? <>{parts[1]}{parts[2] && <small>{parts[2]}</small>}</> : <>{text}</>;
+}
+
+/**
+ * Rows follow the chosen order on every reading, except while the pointer rests on the list: then they hold their places, so
+ * the row about to be clicked does not move away. New rows join at the end until the pointer leaves.
+ */
+export function useSteadyOrder(keys: string[], held: boolean) {
+  const order = useRef<string[]>([]);
+  if (!held) order.current = keys;
+  else { const present = new Set(keys); order.current = [...order.current.filter(k => present.has(k)), ...keys.filter(k => !order.current.includes(k))]; }
+  return order.current;
 }
 
 /** A per-viewer preference, such as the chosen range; storage can be unavailable, and then the default simply applies. */
@@ -44,15 +53,4 @@ export async function copyText(text: string) {
   area.value = text; area.setAttribute('aria-hidden', 'true'); area.style.cssText = 'position:fixed;opacity:0;pointer-events:none';
   document.body.append(area); area.select();
   try { if (!document.execCommand('copy')) throw new Error('复制失败'); } finally { area.remove(); focused?.focus({ preventScroll: true }); }
-}
-
-/**
- * Rows follow the chosen order on every reading, except while the pointer rests on the table: then they hold their places, so
- * the row about to be clicked does not move away. New rows join at the end until the pointer leaves.
- */
-export function useSteadyOrder(keys: string[], held: boolean) {
-  const order = useRef<string[]>([]);
-  if (!held) order.current = keys;
-  else { const present = new Set(keys); order.current = [...order.current.filter(k => present.has(k)), ...keys.filter(k => !order.current.includes(k))]; }
-  return order.current;
 }

@@ -1,6 +1,6 @@
 export const API_PATH = '/api/dsh-performance';
 export const PANEL = 'dsh-performance';
-/** Trend history and long tasks are kept this long, in memory only. */
+/** Trend history and responsiveness records are kept this long, in memory only. */
 export const HISTORY_MS = 3_600_000;
 /** The sidebar row samples every 3 s; with the page open, every 2 s; after a failure, every 15 s. */
 export const CADENCE = { idle: 3_000, page: 2_000, failed: 15_000 };
@@ -25,7 +25,7 @@ export interface RawProcess {
 export interface RawSystem { idleMs: number; kernelMs: number; userMs: number; memoryTotal: number; memoryAvailable: number }
 export interface RawSample { time: number; monotonic: number; cores: number; system: RawSystem | null; processes: RawProcess[]; collector: RawProcess | null; unavailable: number; collectionMs: number }
 
-/** Chart order, bottom to top: the stable desktop parts first, the most volatile (tool programs) last. */
+/** Chart order, bottom to top: the stable desktop parts first, the most volatile (programs DSH started) last. */
 export const GROUPS = ['ui', 'gpu', 'app', 'host', 'tools'] as const;
 export type Group = typeof GROUPS[number];
 export type Kind = 'main' | 'renderer' | 'gpu' | 'network' | 'storage' | 'audio' | 'utility' | 'crashpad' | 'other' | 'host' | 'tool';
@@ -33,8 +33,8 @@ export interface ProcessMetric {
   pid: number; parent: number; created: number; name: string; kind: Kind; group: Group; threads: number;
   /** Utility service name, Electron type or tool command line. */
   detail: string | null;
-  /** For a tool process whose executable ships inside an installed plugin: that plugin's package name. */
-  plugin?: string | null;
+  /** For a tool process: the executable it runs, and the installed plugin whose folder holds it, if any. */
+  path?: string | null; plugin?: string | null;
   /** Share of the whole machine's CPU over the last interval; null without a valid baseline. */
   cpu: number | null; memory: number | null;
 }
@@ -66,18 +66,25 @@ export interface Point { time: number; intervalMs: number | null; cpu: number[] 
 export interface PluginInfo { id: string; label: string; version: string }
 
 /**
- * The Host can profile itself so its main thread and memory can be split by plugin. This is enabled only while the details
- * page is visible; the sidebar's lightweight process readings never start an inspector session.
+ * The Host profiles itself from the moment it starts, so its main thread and memory can be split by plugin: a stack sample
+ * every 10 ms and an allocation sample per 128 KB. A window closes with each reading, or every 10 s while none come (the
+ * window hidden), so a profile never grows unbounded. Reading memory collects garbage first: it is read a minute after the
+ * profiler starts and then every 5 minutes, only while readings come in.
  */
-export const PROFILER = { sampleMs: 10, heapBytes: 128 * 1024, memoryEveryMs: 300_000, firstMemoryMs: 60_000, lingerMs: 600_000 };
+export const PROFILER = { sampleMs: 10, heapBytes: 128 * 1024, windowMs: 10_000, memoryEveryMs: 300_000, firstMemoryMs: 60_000 };
 /** Owners of the Host's main thread besides the plugins (`plugin:<id>`): DSH itself, garbage collection, everything else. */
 export const REST = ['core', 'gc', 'other'] as const;
+/** Running since the Host started, paused by the user until resumed or DSH restarts, or impossible in this environment. */
+export type ProfilerState = 'running' | 'paused' | 'unavailable';
 export interface Attribution {
   /** Each owner's share of the whole machine's CPU over this reading's interval, like `cpu`; null without a matching window. */
   cpu: Record<string, number> | null;
-  /** The latest memory reading: bytes each owner allocated since monitoring began and still holds (sampled estimates). */
+  /** The latest memory reading: bytes each owner allocated since the profiler started and still holds (sampled estimates). */
   memory: { at: number; owners: Record<string, number>; pauseMs: number } | null;
-  /** How long the Host paused the last time the profiler started; null until it has. */
+  state: ProfilerState;
+  /** When the profiler last started: memory counts allocations from then on. */
+  since: number | null;
+  /** How long the Host paused when the profiler last started; null until it has. */
   startPauseMs: number | null;
   /** Why the Host cannot split itself in this environment; null when it can. */
   error: string | null;

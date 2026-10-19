@@ -2,17 +2,25 @@
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { Responsiveness } from '../src/responsiveness';
+import { breakdown } from '../src/breakdown';
 import { pointOf, programs, summarize } from '../src/insights';
+import { Tracker } from '../src/tracking';
+import { assess } from '../src/verdict';
 import type { Point, ProcessMetric, Sample } from '../src/contracts';
 
-/** An hour of 2-second points over a tree with tool programs: the most the page ever computes on one reading. */
+/** An hour of 2-second points over a tree with tool programs: everything the page computes on one reading, timed. */
 (window as unknown as { runStatisticsProbe(): unknown }).runStatisticsProbe = () => {
   const processes: ProcessMetric[] = Array.from({ length: 16 }, (_, i) => ({ pid: i + 1, parent: i > 8 ? i : 0, created: 1, name: i > 8 ? 'node.exe' : 'DeepSeek Harness.exe',
     kind: i > 8 ? 'tool' : 'renderer', group: i > 8 ? 'tools' : 'ui', threads: 8, detail: null, cpu: 1, memory: 10 * 1024 ** 2 }));
-  const sample = { time: 0, intervalMs: 2000, cpu: 16, memory: 160 * 1024 ** 2, system: { cpu: 30, memoryUsed: 8 * 1024 ** 3, memoryTotal: 16 * 1024 ** 3 }, processes } as Sample;
-  const history: Point[] = Array.from({ length: 1800 }, (_, i) => pointOf({ ...sample, time: i * 2000 }));
-  const times: number[] = [];
-  for (let i = 0; i < 110; i++) { const start = performance.now(); summarize(history, 0, 3_600_000); programs(processes); pointOf(sample); if (i >= 10) times.push(performance.now() - start); }
+  const sample = { time: 3_600_000, intervalMs: 2000, cpu: 16, memory: 160 * 1024 ** 2, system: { cpu: 30, memoryUsed: 8 * 1024 ** 3, memoryTotal: 16 * 1024 ** 3 }, processes } as Sample;
+  const tracker = new Tracker(), history: Point[] = Array.from({ length: 1800 }, (_, i) => { const s = { ...sample, time: (i + 1) * 2000 }; tracker.record(s); return pointOf(s); });
+  const tracked = tracker.snapshot(), times: number[] = [];
+  for (let i = 0; i < 110; i++) {
+    const start = performance.now();
+    summarize(history, 0, 3_600_000); assess(history, sample, [], 3_600_000); breakdown({ sample, points: history, tracked, plugins: [], start: 0, end: 3_600_000, sort: 'cpu' });
+    programs(processes); pointOf(sample);
+    if (i >= 10) times.push(performance.now() - start);
+  }
   return { points: history.length, processes: processes.length, iterations: times.length, averageMs: times.reduce((a, b) => a + b, 0) / times.length, maxMs: Math.max(...times) };
 };
 /** Real Chromium long frames reach the observer: six main-thread stalls of about 65 ms. */

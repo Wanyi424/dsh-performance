@@ -17,6 +17,8 @@ test('each process and tool program keeps a 15-second trend: mean CPU, last memo
   const series = t.snapshot().series.get('5:5000')!;
   assert.deepEqual(series.times, [30_000, 45_000]); assert.deepEqual(series.cpu, [3, 6]); assert.deepEqual(series.memory, [130, 90]);
   assert.deepEqual(t.snapshot().series.get('1:0')!.memory, [50, 50]);
+  // Each part of DSH keeps a trend of all its processes together.
+  assert.deepEqual(t.snapshot().series.get('group:tools')!.cpu, [3, 6]); assert.deepEqual(t.snapshot().series.get('group:app')!.memory, [50, 50]);
 });
 
 test('programs are recorded from their own start to when they were last seen, with their peaks', () => {

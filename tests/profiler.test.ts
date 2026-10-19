@@ -22,23 +22,23 @@ export function chatter(n) { for (let i = 0; i < n; i++) console.log('%c', new A
 }
 
 // The real V8 profilers, in this process, as the Host runs them.
-test('each reading closes a window that charges the Host\'s main thread to plugins, and memory is read when due', { timeout: 30_000 }, async () => {
+test('profiling runs from the start: every reading closes a window charged to plugins, and memory is read when due', { timeout: 30_000 }, async () => {
   const { profile, plugin, plugins } = await fixture();
   let now = 1_000_000;
   const profiler = new HostProfiler(() => plugins, join(profile, 'dsh-install'), () => now);
   await profiler.start();
   try {
-    const first = profiler.take(1);
-    assert.equal(first.cpu, null, 'the first reading opens the first window'); assert.ok(first.startPauseMs! >= 0); assert.equal(first.error, null);
+    const status = profiler.status();
+    assert.equal(status.state, 'running'); assert.equal(status.since, now); assert.ok(status.startPauseMs! >= 0); assert.equal(status.error, null);
     plugin.burn(300);
-    const second = profiler.take(1);
-    assert.deepEqual(Object.keys(second.cpu!), ['plugin:dsh-busy', 'core', 'gc', 'other']);
-    assert.ok(second.cpu!['plugin:dsh-busy'] > 50, `the plugin had most of the window: ${second.cpu!['plugin:dsh-busy']}%`);
+    const first = profiler.take(1);
+    assert.deepEqual(Object.keys(first.cpu!), ['plugin:dsh-busy', 'core', 'gc', 'other'], 'the first reading already closes a window: profiling began with the Host');
+    assert.ok(first.cpu!['plugin:dsh-busy'] > 50, `the plugin had most of the window: ${first.cpu!['plugin:dsh-busy']}%`);
     const detail = profiler.detail('plugin:dsh-busy', now - 60_000, now);
     // Loose bounds: under a loaded machine the sampler thread can be late, and the gap goes to the frame before it.
     assert.equal(detail.cpu[0].name, 'burn'); assert.match(detail.cpu[0].where, /^lib\/host\.mjs:2$/); assert.ok(detail.cpu[0].value >= 150, `burn ${detail.cpu[0].value} ms`);
     assert.deepEqual(profiler.detail('plugin:dsh-busy', now + 120_000, now + 180_000).cpu, [], 'nothing outside the range');
-    assert.equal(profiler.take(1).memory, null, 'memory is first read a minute after start');
+    assert.equal(profiler.take(1).memory, null, 'memory is first read a minute after the profiler starts');
 
     // ~4 MB kept by the plugin, and ~16 MB it only logs: while connected, V8 keeps console arguments for the inspector, and
     // they are neither the plugin's nor allowed to stay.
@@ -53,20 +53,29 @@ test('each reading closes a window that charges the Host\'s main thread to plugi
     assert.equal(memory.at, now); assert.ok(memory.pauseMs >= 0);
   } finally { profiler.dispose(); await rm(profile, { recursive: true, force: true }); }
   assert.equal(profiler.take(1).cpu, null, 'no windows after dispose');
+  assert.equal(profiler.status().state, 'paused');
 });
 
-test('with no readings for a while the profiler stops, and the next reading starts it again', { timeout: 20_000 }, async () => {
-  const { profile, plugins } = await fixture();
-  const profiler = new HostProfiler(() => plugins, join(profile, 'dsh-install'));
-  await profiler.start();
-  mock.timers.enable({ apis: ['setTimeout'] });
+test('with no readings, windows close on their own; a pause stops the profiler, keeps what it recorded, and resuming starts it again', { timeout: 20_000 }, async () => {
+  const { profile, plugin, plugins } = await fixture();
+  let now = 1_000_000;
+  // The timer that closes windows while no readings come is mocked; the clock it reads is the profiler's own.
+  mock.timers.enable({ apis: ['setInterval'] });
+  const profiler = new HostProfiler(() => plugins, join(profile, 'dsh-install'), () => now);
   try {
-    // Timers are mocked here, so the pause between readings is spent busy.
-    const pause = () => { const end = performance.now() + 20; while (performance.now() < end) { /* busy */ } };
-    profiler.take(4); pause();
-    assert.ok(profiler.take(4).cpu, 'running: a reading closes a window');
-    mock.timers.tick(PROFILER.lingerMs);
-    assert.equal(profiler.take(4).cpu, null, 'stopped: the reading after a long pause starts a new first window');
-    pause(); assert.ok(profiler.take(4).cpu);
+    await profiler.start();
+    plugin.burn(80);
+    now += PROFILER.windowMs; mock.timers.tick(PROFILER.windowMs / 2);
+    assert.ok(profiler.detail('plugin:dsh-busy', 0, now).cpu[0]?.value >= 30, 'the timer closed the window and recorded where the time went');
+    assert.ok(profiler.take(1).cpu, 'a reading still gets its own window');
+
+    profiler.pause();
+    assert.equal(profiler.status().state, 'paused');
+    assert.equal(profiler.take(1).cpu, null, 'paused: no split');
+    assert.ok(profiler.detail('plugin:dsh-busy', 0, now).cpu.length, 'what was recorded stays viewable');
+    await profiler.start();
+    assert.equal(profiler.status().state, 'running'); assert.equal(profiler.status().since, now);
+    plugin.burn(40);
+    assert.ok(profiler.take(1).cpu!['plugin:dsh-busy'] > 0, 'resumed: readings are split again');
   } finally { mock.timers.reset(); profiler.dispose(); await rm(profile, { recursive: true, force: true }); }
 });

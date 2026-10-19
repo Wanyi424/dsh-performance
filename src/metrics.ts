@@ -36,7 +36,7 @@ export function calculate(current: RawSample, previous?: RawSample, plugins: rea
   const processes: ProcessMetric[] = current.processes.map(p => ({
     pid: p.pid, parent: p.parent, created: p.created, name: p.name, threads: p.threads, ...classify(p),
     detail: p.role === 'tool' ? p.command : p.subtype ?? p.type, cpu: cpu(p), memory: p.memory,
-    ...p.role === 'tool' ? { plugin: pluginOf(p.image, plugins) } : {},
+    ...p.role === 'tool' ? { path: p.image ?? null, plugin: pluginOf(p.image, plugins) } : {},
   }));
   const memories = processes.flatMap(p => p.memory === null ? [] : [p.memory]);
   const now = current.system, then = previous?.system, total = now && then ? now.kernelMs + now.userMs - then.kernelMs - then.userMs : 0;

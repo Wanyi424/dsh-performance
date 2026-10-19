@@ -1,5 +1,5 @@
-import { HISTORY_MS, type Sample } from './contracts';
-import { commandSummary, keyOf, programName, programs } from './insights';
+import { HISTORY_MS, type Group, type Sample } from './contracts';
+import { commandSummary, firstTime, keyOf, programName, programs } from './insights';
 
 /** Per-process trends are kept at this resolution: an hour is 240 buckets per process. */
 export const BUCKET_MS = 15_000;
@@ -7,17 +7,30 @@ export const BUCKET_MS = 15_000;
 export interface Series { times: number[]; cpu: number[]; memory: number[] }
 /** A program the Host started, as seen across samples; `ended` is when it was last seen running. */
 export interface ProgramRecord {
-  key: string; name: string; summary: string; command: string | null; pid: number; members: number;
+  key: string; name: string; summary: string; command: string | null; pid: number; members: number; plugin: string | null;
   started: number; ended: number | null; peakCpu: number | null; peakMemory: number | null;
 }
 export interface Tracked { series: ReadonlyMap<string, Series>; programs: readonly ProgramRecord[] }
 /** The trend key of an owner of the Host's main thread: a plugin (`plugin:<id>`), DSH, garbage collection or the rest. */
 export const ownerKey = (id: string) => `owner:${id}`;
+/** The trend key of one part of DSH, all its processes together. */
+export const groupKey = (group: Group) => `group:${group}`;
+
+/** Statistics of one series inside the range; CPU is the mean of the 15-second buckets. */
+export function seriesStats(series: Series | undefined, start: number) {
+  if (!series) return { averageCpu: null, peakCpu: null, peakMemory: null, memoryChange: null };
+  const from = firstTime(series.times, start);
+  const cpus = series.cpu.slice(from).filter(v => !Number.isNaN(v)), memories = series.memory.slice(from).filter(v => !Number.isNaN(v));
+  return {
+    averageCpu: cpus.length ? cpus.reduce((a, b) => a + b, 0) / cpus.length : null, peakCpu: cpus.length ? Math.max(...cpus) : null,
+    peakMemory: memories.length ? Math.max(...memories) : null, memoryChange: memories.length > 1 ? memories.at(-1)! - memories[0] : null,
+  };
+}
 
 /**
- * Follows every DSH process, tool program and owner of the Host's main thread from one sample to the next: a coarse trend for
- * each, and when each program started and stopped. It reads only the samples already taken, so it adds no collection. An
- * owner's memory is read every few minutes; each bucket holds the latest reading, so its trend steps from one to the next.
+ * Follows every part of DSH, process, tool program and owner of the Host's main thread from one sample to the next: a coarse
+ * trend for each, and when each program started and stopped. It reads only the samples already taken, so it adds no
+ * collection. An owner's memory is read every few minutes; each bucket holds the latest reading, so its trend steps.
  */
 export class Tracker {
   private series = new Map<string, Series & { n: number }>();
@@ -37,7 +50,15 @@ export class Tracker {
         if (old > 0) { s.times.splice(0, old); s.cpu.splice(0, old); s.memory.splice(0, old); }
       }
     };
-    for (const p of sample.processes) if (p.kind !== 'tool') put(keyOf(p), p.cpu, p.memory);
+    const groups = new Map<Group, { cpu: number | null; memory: number | null }>();
+    for (const p of sample.processes) {
+      const g = groups.get(p.group) ?? { cpu: null, memory: null };
+      if (p.cpu !== null) g.cpu = (g.cpu ?? 0) + p.cpu;
+      if (p.memory !== null) g.memory = (g.memory ?? 0) + p.memory;
+      groups.set(p.group, g);
+      if (p.kind !== 'tool') put(keyOf(p), p.cpu, p.memory);
+    }
+    for (const [group, g] of groups) put(groupKey(group), g.cpu, g.memory);
     const split = sample.attribution;
     if (split) for (const id of new Set([...Object.keys(split.cpu ?? {}), ...Object.keys(split.memory?.owners ?? {})])) put(ownerKey(id), split.cpu?.[id] ?? null, split.memory?.owners[id] ?? null);
     const running = new Set<string>();
@@ -46,7 +67,7 @@ export class Tracker {
       const known = this.records.get(program.key), lead = program.lead;
       this.records.set(program.key, {
         key: program.key, name: programName(lead.name), summary: commandSummary(lead.detail), command: lead.detail, pid: lead.pid, members: program.members.length,
-        started: program.members[0].created, ended: null, seen: sample.time,
+        plugin: program.plugin, started: program.members[0].created, ended: null, seen: sample.time,
         peakCpu: program.cpu === null ? known?.peakCpu ?? null : Math.max(known?.peakCpu ?? 0, program.cpu),
         peakMemory: program.memory === null ? known?.peakMemory ?? null : Math.max(known?.peakMemory ?? 0, program.memory),
       });

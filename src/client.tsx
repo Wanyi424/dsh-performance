@@ -1,26 +1,31 @@
-import React, { useEffect, useState, useSyncExternalStore } from 'react';
+import React, { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import { Controller } from './controller';
 import { PANEL } from './contracts';
 import { bytes, cpu } from './format';
 import { Gauge } from './icons';
 import type { ClientContext } from './types';
+import { assess } from './verdict';
 import css from './widget.css';
 declare const require: { async<T>(path: string): Promise<T> };
 
-/** The plugin's entry in the sidebar footer: a row like the host's panel rows, labelled, with the live totals beside the label. */
+/**
+ * The plugin's entry in the sidebar footer: a row like the host's panel rows, with DSH's live totals beside the label. When the
+ * page's conclusion asks for attention, a dot appears and the row's title says why.
+ */
 function Entry({ controller: c, ctx, wide = true }: { controller: Controller; ctx: ClientContext; wide?: boolean }) {
   const s = useSyncExternalStore(c.subscribe, c.snapshot);
   const active = useSyncExternalStore(ctx.layout.panelInfo.subscribe, () => ctx.layout.panelInfo.getSnapshot().activePanelId === PANEL);
   useEffect(() => c.attach(), [c]);
-  const status = s.error ? '采集异常' : s.sample ? `CPU ${cpu(s.sample.cpu)}，内存 ${bytes(s.sample.memory)}` : '正在读取';
-  return <button type="button" className={wide ? 'dpm-entry' : 'dpm-entry dpm-compact'} data-state={s.error ? 'error' : undefined}
-    aria-current={active ? 'page' : undefined} aria-label={`运行监控，${status}`} title={wide ? undefined : `运行监控 · ${status}`}
-    onClick={() => ctx.layout.selectPanel(PANEL)}>
-    <Gauge size={wide ? 16 : 18} />
-    {wide ? <>
+  const verdict = useMemo(() => assess(s.points, s.sample, s.response.frames, Date.now()), [s]), alert = verdict?.level === 'warn' ? verdict : null;
+  const status = s.error ? '读取失败' : s.sample ? `CPU ${cpu(s.sample.cpu)}，内存 ${bytes(s.sample.memory)}` : '正在读取';
+  return <button type="button" className={wide ? 'dpm-entry' : 'dpm-entry dpm-compact'} data-state={s.error ? 'error' : alert ? 'warn' : undefined}
+    aria-current={active ? 'page' : undefined} aria-label={`运行监控，${status}${alert ? `，${alert.title}` : ''}`}
+    title={alert ? `${alert.title}：${alert.detail}` : wide ? undefined : `运行监控 · ${status}`} onClick={() => ctx.layout.selectPanel(PANEL)}>
+    <span className="dpm-entry-icon"><Gauge size={wide ? 16 : 18} />{(s.error || alert) && <i className="dpm-entry-dot" />}</span>
+    {wide && <>
       <span className="dpm-entry-label">运行监控</span>
-      <span className="dpm-entry-value" aria-hidden="true">{s.error ? '异常' : s.sample ? `${cpu(s.sample.cpu)} · ${bytes(s.sample.memory)}` : '…'}</span>
-    </> : s.error && <i className="dpm-entry-alert" />}
+      <span className="dpm-entry-value" aria-hidden="true">{s.error ? '读取失败' : s.sample ? `${cpu(s.sample.cpu)} · ${bytes(s.sample.memory)}` : '…'}</span>
+    </>}
   </button>;
 }
 
