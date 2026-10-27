@@ -75,7 +75,7 @@ export function Page({ controller: c }: { controller: Controller }) {
 
   return <div ref={root} className="dpm-root"><style>{css}</style>
     <header ref={bar} className="dpm-bar">
-      <h1>运行监控</h1>
+      <h1>DSH 性能监控</h1>
       <span className="dpm-live" data-state={stale ? 'paused' : sample ? 'live' : 'connecting'}><i key={sample?.time} />
         {stale ? '已暂停更新' : sample ? `实时 · 每 ${CADENCE.page / 1000} 秒` : '正在连接…'}</span>
       <span className="dpm-spacer" />

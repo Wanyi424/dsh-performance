@@ -508,7 +508,7 @@ body[data-ds-dark-theme] .dpm-area { fill-opacity: .3; }
   .dpm-head-value { font-size: 19px; }
   /* A hidden column keeps its cells, so the cells after it stay in their own columns. */
   .dpm-table .c-trend { width: 0; }
-  .dpm-table .dpm-trend-cell { padding: 0; visibility: hidden; }
+  .dpm-table .dpm-trend-cell { padding: 0; visibility: hidden; overflow: hidden; }
   .dpm-report-label { display: none; }
 }
 @container (max-width: 600px) {

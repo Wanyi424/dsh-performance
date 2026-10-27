@@ -17,7 +17,7 @@ export function report({ now, rangeMs, rangeLabel, sample, points, response, ver
   now: number; rangeMs: number; rangeLabel: string; sample?: Sample; points: Point[]; response: ResponseLog; verdict: Verdict | null; rows: Breakdown; plugins: readonly PluginInfo[];
 }) {
   const start = now - rangeMs, s = summarize(points, start, now), version = plugins.find(p => p.id === SELF)?.version;
-  const out = ['# DSH 运行监控报告', '', `- 时间：${dateTime(now)}，统计最近 ${rangeLabel}`];
+  const out = ['# DSH 性能监控报告', '', `- 时间：${dateTime(now)}，统计最近 ${rangeLabel}`];
   if (verdict) out.push(`- 结论：${verdict.title}。${verdict.detail}。`, ...verdict.findings.filter(f => f.title !== verdict.title).map(f => `- 另外：${f.title}。${f.detail}。`));
   if (sample) out.push(`- 电脑：${sample.cores} 个逻辑处理器${sample.system ? `，内存 ${gb(sample.system.memoryTotal)}` : ''}；DSH 已运行 ${span(sample.time - sample.started)}`);
 
@@ -50,6 +50,6 @@ export function report({ now, rangeMs, rangeLabel, sample, points, response, ver
     `- 超过 ${SLOW_INTERACTION_MS} 毫秒的慢交互 ${rs.slow} 次${rs.slowest === null ? '' : `，最慢 ${duration(rs.slowest)}`}`,
     `- 记录时长 ${span(rs.observedMs)}`,
   );
-  out.push('', `> 由运行监控${version ? ` v${version} ` : ''}生成。插件占用是后台的自我抽样估算；报告只列程序名，不含命令行和文件路径。`);
+  out.push('', `> 由 DSH 性能监控${version ? ` v${version} ` : ''}生成。插件占用是后台的自我抽样估算；报告只列程序名，不含命令行和文件路径。`);
   return out.join('\n');
 }

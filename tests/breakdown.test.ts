@@ -8,7 +8,7 @@ import { assess } from '../src/verdict';
 import type { Attribution, Point, ProcessMetric, Sample } from '../src/contracts';
 
 const MB = 1024 ** 2;
-const PLUGINS = [{ id: 'dsh-notes', label: '笔记', version: '1.0.0' }, { id: 'dsh-context', label: '上下文', version: '0.7.0' }, { id: 'dsh-performance', label: '运行监控', version: '0.7.0' },
+const PLUGINS = [{ id: 'dsh-notes', label: '笔记', version: '1.0.0' }, { id: 'dsh-context', label: '上下文', version: '0.7.0' }, { id: 'dsh-performance', label: 'DSH 性能监控', version: '0.7.0' },
   { id: 'dsh-theme', label: '主题', version: '0.1.0' }];
 const proc = (pid: number, parent: number, kind: ProcessMetric['kind'], group: ProcessMetric['group'], cpu: number, memory: number, extra: Partial<ProcessMetric> = {}): ProcessMetric =>
   ({ pid, parent, created: pid, name: 'DeepSeek Harness.exe', kind, group, threads: 4, detail: null, cpu, memory: memory * MB, ...extra });
@@ -49,7 +49,7 @@ test('DSH is listed by part, busiest first; a part with several processes opens 
 
 test('the Host opens into every plugin, then DSH itself and「其他」under a heading of their own; the lines add up to the Host, idle ones greyed, not folded', () => {
   const { sample, points, tracked } = minute(), data = breakdown({ sample, points, tracked, plugins: PLUGINS, start: 0, end: 60_000, sort: 'cpu' }), host = data.dsh[0];
-  assert.deepEqual(host.children!.map(r => r.name), ['笔记', '上下文', '运行监控', '主题', 'DSH 自身', '其他']);
+  assert.deepEqual(host.children!.map(r => r.name), ['笔记', '上下文', 'DSH 性能监控', '主题', 'DSH 自身', '其他']);
   const total = host.children!.reduce((a, r) => a + r.cpu!, 0);
   assert.ok(Math.abs(total - host.cpu!) < 1e-9, `${total} vs ${host.cpu}`);
   assert.ok(Math.abs(host.children!.at(-1)!.cpu! - 1) < 1e-9, '「其他」is garbage collection, other code and the rest');
@@ -85,11 +85,11 @@ test('the report reads like the page, by name only: no command lines or paths', 
   const { sample, points, tracked } = minute(), data = breakdown({ sample, points, tracked, plugins: PLUGINS, start: 0, end: 60_000, sort: 'cpu' });
   const response = { frames: [{ time: 59_000, duration: 120 }], interactions: [], spans: [{ start: 0, end: 60_000 }], supported: { frames: true, interactions: true } };
   const text = report({ now: 60_000, rangeMs: 900_000, rangeLabel: '15 分钟', sample, points, response, verdict: assess(points, sample, response.frames, 60_000), rows: data, plugins: PLUGINS });
-  assert.match(text, /^# DSH 运行监控报告\n/);
+  assert.match(text, /^# DSH 性能监控报告\n/);
   assert.match(text, /- 结论：DSH 运行正常。没有发现占用过高、内存上涨或界面卡顿。\n/);
   assert.match(text, /\| 后台 \| 4\.0% \| 170 MB \|/); assert.match(text, /\| └ 笔记 \| 1\.0% \| 6 MB \|/);
   assert.match(text, /\| context-indexer（插件：上下文） \| 1\.0% \| 40 MB \|/);
   assert.match(text, /已退出：Git（status） × 2/); assert.match(text, /- 卡顿 1 次，最长 120 毫秒/);
-  assert.match(text, /由运行监控 v0\.7\.0 生成/);
+  assert.match(text, /由 DSH 性能监控 v0\.7\.0 生成/);
   assert.doesNotMatch(text, /--watch|--porcelain|C:\\|node_modules/, 'no command lines or paths');
 });

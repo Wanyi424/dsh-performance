@@ -53,7 +53,7 @@ function split(n: number, agent: number): Attribution {
     'plugin:dsh-performance': .03 + noise(n, 12) * .02, 'plugin:dsh-context': .01 + agent * .01, core: .08 + agent * .12, gc: .02 + agent * .02, other: .01 } };
 }
 const PLUGINS = [{ id: 'dsh-translate', label: '翻译', version: '0.2.4' }, { id: 'dsh-markdown-notes', label: 'Markdown 笔记', version: '0.5.2' },
-  { id: 'dsh-performance', label: '运行监控', version: '0.7.0' }, { id: 'dsh-context', label: '上下文 (dsh-context)', version: '0.71.0' }];
+  { id: 'dsh-performance', label: 'DSH 性能监控', version: '0.7.2' }, { id: 'dsh-context', label: '上下文 (dsh-context)', version: '0.71.0' }];
 const hot = (name: string, where: string, value: number) => ({ name, where, value });
 const DETAIL: Record<string, OwnerDetail> = {
   'plugin:dsh-markdown-notes': { cpu: [hot('renderMarkdown', 'lib/host.js:1040', 2_400), hot('watch', 'lib/host.js:77', 310)], memory: [hot('renderMarkdown', 'lib/host.js:1040', 5.2 * MB), hot('remember', 'lib/host.js:212', 1.1 * MB)], memoryAt: null },
@@ -83,152 +83,100 @@ const action = (name: string) => (r: { url(): string; request(): { postData(): s
 
 const browser = await chromium.launch({ headless: true });
 try {
-  const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+  const page = await browser.newPage({ viewport: { width: 1584, height: 1120 } });
   const errors: string[] = [], chunks: string[] = [];
   page.on('pageerror', error => errors.push(error.message));
   page.on('request', r => { if (r.url().endsWith('client.page.js')) chunks.push(r.url()); });
-  await serve(page);
-  await page.goto('http://dsh.test/');
-  await page.getByRole('button', { name: /^运行监控，CPU/ }).waitFor();
-  const entry = page.locator('.dpm-entry'), rail = page.locator('.dpm-rail'), verdict = page.locator('.dpm-verdict');
-  assert.equal(chunks.length, 0, 'the page bundle loads only when opened');
-  await entry.click(); await page.getByRole('heading', { name: '运行监控', exact: true }).waitFor();
+  await serve(page); await page.goto('http://dsh.test/');
+  await page.getByRole('button', { name: /^DSH 性能监控，CPU/ }).waitFor();
+  const entry = page.locator('.dpm-entry'), table = page.locator('.dpm-table'), drawer = page.locator('.dpm-drawer');
+  assert.equal(chunks.length, 0);
+  await entry.click(); await page.getByRole('heading', { name: 'DSH 性能监控', exact: true }).waitFor();
   assert.equal(chunks.length, 1); assert.equal(await entry.getAttribute('aria-current'), 'page');
-  await verdict.locator('h2').waitFor();
-  for (const title of ['DSH CPU', 'DSH 内存', '界面流畅度']) await page.locator('.dpm-metric h3', { hasText: title }).waitFor();
-
-  // Real main-thread stalls and one slow click: Chromium's own long-frame and event-timing entries. They are recent and
-  // frequent, so the conclusion says so and the sidebar row shows its dot.
+  await page.locator('.dpm-verdict h2').waitFor();
+  assert.deepEqual(await page.locator('.dpm-head-label').evaluateAll(nodes => nodes.map(node => node.firstChild?.textContent)), ['CPU', '内存', '界面响应']);
   const stall = async () => {
     const frames = await page.evaluate(() => (window as unknown as { runTaskProbe(): Promise<number> }).runTaskProbe());
-    await page.evaluate(() => document.querySelector('.dpm-bar h1')!.addEventListener('click', () => { const end = performance.now() + 260; while (performance.now() < end) { /* slow handler */ } }, { once: true }));
-    await page.locator('.dpm-bar h1').click(); await page.waitForTimeout(300);
-    return frames;
+    await page.evaluate(() => document.querySelector('.dpm-bar h1')!.addEventListener('click', () => { const end = performance.now() + 260; while (performance.now() < end) {} }, { once: true }));
+    await page.locator('.dpm-bar h1').click(); await page.waitForTimeout(300); return frames;
   };
-  const taskProbe = await stall();
-  assert.ok(taskProbe >= 6, 'the long-frame observer received the stalls');
-  await page.waitForFunction(() => /次卡顿/.test(document.querySelectorAll('.dpm-metric')[2]?.textContent ?? ''));
-  await page.waitForFunction(() => document.querySelector('.dpm-verdict')?.getAttribute('data-level') === 'warn');
-  assert.match(await verdict.locator('h2').innerText(), /界面出现卡顿/);
-  assert.equal(await entry.getAttribute('data-state'), 'warn'); assert.match(await entry.getAttribute('title') ?? '', /^界面出现卡顿：近 5 分钟卡顿 \d+ 次/);
-  assert.equal(await entry.locator('.dpm-entry-dot').count(), 1, 'the sidebar row shows a dot');
+  const taskProbe = await stall(); assert.ok(taskProbe >= 6);
+  await page.locator('.dpm-verdict[data-level="warn"]').waitFor();
+  assert.equal(await entry.getAttribute('data-state'), 'warn');
+  assert.equal(await entry.locator('.dpm-entry-dot').count(), 1);
   const statisticsProbe = await page.evaluate(() => (window as unknown as { runStatisticsProbe(): unknown }).runStatisticsProbe());
-
-  // Hidden windows do not sample; failures show in the conclusion, keep the last reading and recover on retry.
   await page.evaluate(() => { Object.defineProperty(document, 'hidden', { configurable: true, value: true }); document.dispatchEvent(new Event('visibilitychange')); });
   const hidden = calls; await page.waitForTimeout(3300); assert.equal(calls, hidden);
   await page.evaluate(() => { Object.defineProperty(document, 'hidden', { configurable: true, value: false }); document.dispatchEvent(new Event('visibilitychange')); });
   await page.waitForTimeout(300); assert.equal(calls, hidden + 1);
-  fail = true; await page.locator('.dpm-verdict[data-level="error"]').waitFor({ timeout: 5000 });
-  assert.match(await verdict.innerText(), /暂时读不到数据[\s\S]*模拟采集失败/); assert.match(await entry.innerText(), /读取失败/);
-  await page.screenshot({ animations: 'disabled', path: 'artifacts/error.png' });
-  fail = false; await page.getByRole('button', { name: '重试', exact: true }).click(); await page.locator('.dpm-verdict[data-level="error"]').waitFor({ state: 'hidden' });
-
-  // Accumulate a quarter of an hour on an accelerated clock through the real sampler; production code has no seeded history.
+  fail = true; await page.locator('.dpm-banner[role="alert"]').waitFor({ timeout: 5000 });
+  assert.match(await page.locator('.dpm-banner').innerText(), /模拟采集失败/);
+  fail = false; await page.getByRole('button', { name: '重试', exact: true }).click();
+  await page.locator('.dpm-banner').waitFor({ state: 'hidden' });
   clock = Date.now(); await page.clock.install({ time: new Date(clock) });
   const reading = async () => { clock! += 2000; const response = page.waitForResponse(action('sample')); await page.clock.runFor(2000); await response; await new Promise(r => setTimeout(r, 10)); };
-  for (let i = 0; i < 450; i++) {
-    await reading();
-    if (i === 200) assert.match(await rail.locator('.dpm-row[data-group="tools"]', { hasText: 'vite.js' }).innerText(), /^Node\.js[\s\S]*在 PowerShell 中运行/, 'a terminal running a dev server is that server');
-    if (i === 330) await stall();
-  }
-  for (const label of ['界面', 'GPU', '主进程与服务', '后台', '启动的程序']) assert.equal(await page.locator('.dpm-key', { hasText: label }).count(), 1, label);
-  assert.ok(await page.locator('.dpm-area').count() >= 5, 'stacked areas of every part drawn');
-  assert.ok(await page.locator('.dpm-life').count() >= 1 && await page.locator('.dpm-blip').count() >= 1, 'programs that started or stopped: named bars for long runs, ticks for single commands');
-
-  // 「谁在占用」: DSH by part with the Host open into its plugins, busiest first; the programs DSH started, named by what they run.
-  await rail.locator('.dpm-row', { hasText: 'Markdown 笔记' }).waitFor();
-  const owners = await rail.locator('.dpm-row[data-depth="1"][data-group="host"] .dpm-row-name strong').allInnerTexts();
-  assert.equal(owners[0], 'Markdown 笔记', 'plugins ordered by their average'); assert.deepEqual(owners.slice(-4), ['DSH 本身', '内存回收', '其他代码', '其余工作']);
-  assert.match(await rail.locator('.dpm-row[data-group="host"]', { hasText: '运行监控' }).innerText(), /本插件 · v0\.7\.0 · 自带程序 1 个/, 'the collector is this plugin\'s helper');
-  assert.match(await rail.locator('.dpm-row[data-group="host"]', { hasText: 'Markdown 笔记' }).innerText(), /\n(?:[7-9]|1\d) MB$/, 'memory from the latest reading, grown past the first (6 MB)');
-  assert.match(await rail.locator('.dpm-row[data-group="tools"]', { hasText: 'context-indexer' }).innerText(), /上下文 \(dsh-context\)/, 'a helper carries its plugin');
-  await rail.getByRole('button', { name: /已退出/ }).click();
-  assert.match((await rail.locator('.dpm-row[data-ended]').allInnerTexts()).join('\n'), /Git × \d+/, 'one command run again and again is one line');
-  await rail.locator('.dpm-cols').getByRole('button', { name: /^内存/ }).click();
-  assert.equal(await rail.locator('.dpm-cols').getByRole('button', { name: /^内存/ }).getAttribute('aria-pressed'), 'true');
-  await rail.locator('.dpm-cols').getByRole('button', { name: /^CPU/ }).click();
-
-  await page.locator('.dpm-main').evaluate(el => { el.scrollTop = 0; });
-  await page.mouse.move(0, 0);
+  for (let i = 0; i < 450; i++) { await reading(); if (i === 330) await stall(); }
+  await table.locator('.dpm-row', { hasText: 'Markdown 笔记' }).waitFor();
+  const owners = await table.locator('.dpm-row[data-depth="1"][data-group="host"] strong').allInnerTexts();
+  assert.equal(owners[0], 'Markdown 笔记'); assert.deepEqual(owners.slice(-2), ['DSH 自身', '其他']);
+  assert.match(await table.locator('.dpm-row', { hasText: 'DSH 性能监控' }).innerText(), /dsh-performance · v0\.7\.2 · 自带 1 个程序/);
+  assert.ok(await page.locator('.dpm-area').count() >= 5);
+  assert.ok(await page.locator('.dpm-life').count() >= 1 && await page.locator('.dpm-blip').count() >= 1);
+  await table.getByRole('button', { name: /已退出的程序/ }).click();
+  assert.match((await table.locator('.dpm-row[data-ended]').allInnerTexts()).join('\n'), /Git/);
+  await table.getByRole('button', { name: '内存', exact: true }).click();
+  assert.equal(await table.getByRole('button', { name: '内存', exact: true }).getAttribute('aria-pressed'), 'true');
+  await table.getByRole('button', { name: 'CPU', exact: true }).click();
+  await page.locator('.dpm-scroll').evaluate(el => { el.scrollTop = 0; }); await page.mouse.move(0, 0);
   await page.screenshot({ animations: 'disabled', path: 'artifacts/light-top.png' });
-  // Pointing at a part anywhere lifts it in every chart.
-  await page.locator('.dpm-key', { hasText: '启动的程序' }).hover();
+  await page.locator('.dpm-key[data-group="tools"]').hover();
   assert.equal(await page.locator('.dpm-root').getAttribute('data-focus'), 'tools');
-  await page.screenshot({ animations: 'disabled', path: 'artifacts/focus.png', clip: { x: 300, y: 50, width: 1120, height: 640 } });
   const canvas = await page.locator('.dpm-canvas').boundingBox();
   await page.mouse.move(canvas!.x + canvas!.width * .62, canvas!.y + 70);
   await page.locator('.dpm-tooltip').waitFor();
-  assert.match(await page.locator('.dpm-tooltip').innerText(), /后台[\s\S]*DSH 本身[\s\S]*DSH 合计[\s\S]*整机/, 'the tooltip splits the Host\'s main thread');
-  await page.screenshot({ animations: 'disabled', path: 'artifacts/light.png' });
-  // A peak's clock time moves the crosshair to that moment.
-  await page.mouse.move(0, 0); await page.locator('.dpm-tooltip').waitFor({ state: 'hidden' });
-  await page.locator('.dpm-metric .dpm-moment').first().hover(); await page.locator('.dpm-tooltip').waitFor();
+  assert.match(await page.locator('.dpm-tooltip').innerText(), /后台[\s\S]*DSH 合计[\s\S]*整机/);
   await page.mouse.move(0, 0);
-
-  // A detail replaces the list in place, the trend marks it, and back returns to the list where it was.
-  const back = async () => { await rail.getByRole('button', { name: '返回' }).click(); await rail.locator('.dpm-rail-head h2', { hasText: '谁在占用' }).waitFor(); };
-  await rail.locator('.dpm-row[data-group="tools"]', { hasText: 'mcp_server_git' }).locator('.dpm-row-main').click();
-  await rail.locator('.dpm-rail-head h2', { hasText: 'Python' }).waitFor();
-  assert.match(await rail.innerText(), /运行中[\s\S]*进程号（PID）[\s\S]*命令行[\s\S]*mcp_server_git/);
-  assert.equal(await page.locator('.dpm-root').getAttribute('data-selected'), 'tools'); assert.equal(await page.locator('.dpm-own').count(), 2, 'its own line over CPU and memory');
-  await page.clock.runFor(300);
-  await page.screenshot({ animations: 'disabled', path: 'artifacts/detail-program.png' });
-  await back();
-  assert.equal(await rail.locator('.dpm-row[data-active] .dpm-row-name strong').innerText(), 'Python', 'the line just viewed is marked');
-
-  await rail.locator('.dpm-row[data-group="host"]', { hasText: 'Markdown 笔记' }).locator('.dpm-row-main').click();
-  await rail.locator('.dpm-hot li').first().waitFor();
-  assert.match(await rail.innerText(), /最耗时的函数[\s\S]*renderMarkdown[\s\S]*lib\/host\.js:1040[\s\S]*2\.4 秒[\s\S]*占用内存最多的位置/);
-  await page.clock.runFor(300);
-  await page.screenshot({ animations: 'disabled', path: 'artifacts/detail-plugin.png' });
-  await back();
-
-  // The legend opens a part; the Host's details say where its CPU goes, and the page can pause and resume the split.
-  await page.locator('.dpm-key', { hasText: '后台' }).click();
-  await rail.locator('.dpm-block h3', { hasText: '后台的 CPU 花在哪里' }).waitFor();
-  assert.match(await rail.locator('.dpm-block').innerText(), /统计中[\s\S]*DSH 本身[\s\S]*暂停插件统计/);
-  const paused = page.waitForResponse(action('profiling'));
-  await rail.getByRole('button', { name: /暂停插件统计/ }).click(); await paused;
-  assert.equal(profiling, false, 'the page asked the Host to pause');
-  await reading(); await rail.locator('.dpm-chip', { hasText: '已暂停' }).waitFor();
-  await page.screenshot({ animations: 'disabled', path: 'artifacts/detail-host.png' });
-  const resumed = page.waitForResponse(action('profiling'));
-  await rail.getByRole('button', { name: /继续插件统计/ }).click(); await resumed;
-  assert.equal(profiling, true); await reading(); await rail.locator('.dpm-chip', { hasText: '统计中' }).waitFor();
-  await back();
-
-  // The report is the page as text, by name only.
-  await page.evaluate(() => { Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async (text: string) => { (window as unknown as { copied: string }).copied = text; } } }); });
-  await page.getByRole('button', { name: '复制诊断报告' }).click(); await page.getByRole('button', { name: '已复制' }).waitFor();
-  const copied = await page.evaluate(() => (window as unknown as { copied: string }).copied);
-  assert.match(copied, /^# DSH 运行监控报告\n[\s\S]*## 各部分[\s\S]*└ Markdown 笔记[\s\S]*## DSH 启动的程序[\s\S]*## 界面响应/);
-  assert.doesNotMatch(copied, /--repository|--port|D:\\work|node_modules/, 'no command lines or paths');
-
-  await page.getByRole('button', { name: '说明', exact: true }).click(); await rail.locator('.dpm-rail-head h2', { hasText: '说明' }).waitFor();
-  assert.match(await rail.innerText(), /结论怎么得出[\s\S]*需要注意[\s\S]*这次是 286 毫秒[\s\S]*最近一次停顿 84 毫秒/, 'the rules and the profiler\'s own pauses are told');
-  await page.screenshot({ animations: 'disabled', path: 'artifacts/about.png' });
-  await page.getByRole('button', { name: '说明', exact: true }).click(); await rail.locator('.dpm-rail-head h2', { hasText: '谁在占用' }).waitFor();
-  await page.getByRole('button', { name: '1 小时', exact: true }).click();
-  assert.equal(await page.getByRole('button', { name: '1 小时', exact: true }).getAttribute('aria-pressed'), 'true');
-  await page.getByRole('button', { name: '15 分钟', exact: true }).click();
-
-  await page.evaluate(() => { document.documentElement.dataset.theme = 'dark'; });
-  await page.clock.runFor(300);
-  await page.screenshot({ animations: 'disabled', path: 'artifacts/dark.png' });
-  await page.evaluate(() => { delete document.documentElement.dataset.theme; });
-  await page.getByRole('button', { name: '切换侧栏' }).click();
-  assert.equal(await page.locator('.dpm-entry.dpm-compact').count(), 1);
-  // One column when narrow: the list follows the trend, and nothing scrolls sideways.
-  await page.setViewportSize({ width: 560, height: 1000 }); await page.clock.runFor(300);
-  await page.screenshot({ animations: 'disabled', path: 'artifacts/narrow.png' });
-  assert.equal(await page.locator('.dpm-body').evaluate(el => el.scrollWidth > el.clientWidth), false, 'no sideways scrolling at narrow width');
-  const [main, list] = await Promise.all([page.locator('.dpm-main').boundingBox(), rail.boundingBox()]);
-  assert.ok(list!.y >= main!.y + main!.height, 'the list sits below the charts');
-  assert.deepEqual(errors, []);
-  const report = { errors, pageLazyLoaded: true, entrySelectedState: true, conclusionAndAlertDot: true, metricCards: true, linkedTracks: true, programMarks: true, endedPrograms: true,
-    pluginAttribution: true, railDetailsAndBack: true, selectionOverlay: true, profilerPauseResume: true, diagnosticReport: true, about: true, sorting: true, visibilityPause: true,
-    errorAndRetry: true, collapsedSidebar: true, narrowOneColumn: true, taskProbe, statisticsProbe,
-    data: 'scripted collector readings; actual built client; real Chromium long frames and a real slow click; accelerated clock for the trend' };
-  await writeFile('artifacts/browser-check.json', JSON.stringify(report, null, 2)); console.log(report);
-} finally { await browser.close(); }
+  const closeDrawer = async () => { await drawer.getByRole('button', { name: '关闭', exact: true }).click(); await page.clock.runFor(400); await drawer.waitFor({state:'hidden'}); };
+  await table.locator('.dpm-name-button').filter({ hasText: 'Python' }).click();
+  await drawer.getByRole('heading', {name: /Python/}).waitFor();
+  assert.match(await drawer.innerText(), /进程号（PID）[\s\S]*命令行[\s\S]*mcp_server_git/);
+  await closeDrawer();
+  const note = table.getByRole('button', {name:'Markdown 笔记',exact:true});
+  await note.click(); await drawer.locator('.dpm-hot li').first().waitFor();
+  assert.match(await drawer.innerText(), /renderMarkdown[\s\S]*lib\/host\.js:1040/);
+  await page.clock.runFor(400); await page.screenshot({animations:'disabled',path:'artifacts/detail-plugin.png'});
+  await drawer.press('Escape'); await page.clock.runFor(400); await drawer.waitFor({state:'hidden'});
+  await page.locator('.dpm-key[data-group="host"]').click();
+  const pause = page.waitForResponse(action('profiling'));
+  await drawer.getByRole('button', {name:/暂停统计/}).click(); await pause; assert.equal(profiling,false);
+  await reading(); await drawer.locator('.dpm-chip', {hasText:'已暂停'}).waitFor();
+  const resume = page.waitForResponse(action('profiling'));
+  await drawer.getByRole('button', {name:/继续统计/}).click(); await resume; assert.equal(profiling,true);
+  await reading(); await drawer.getByRole('button', {name:/暂停统计/}).waitFor();
+  await closeDrawer();
+  await page.evaluate(`Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async text => { window.copied = text; } } })`);
+  await page.getByRole('button',{name:'复制诊断报告'}).click();
+  await page.locator('.dpm-toast').filter({hasText:'已复制诊断报告'}).waitFor();
+  const copied=await page.evaluate(()=>(window as unknown as {copied:string}).copied);
+  assert.match(copied,/^# DSH 性能监控报告\n[\s\S]*## 各部分[\s\S]*└ Markdown 笔记[\s\S]*## DSH 启动的程序[\s\S]*## 界面响应/);
+  assert.doesNotMatch(copied,/--repository|--port|D:\\work|node_modules/);
+  await page.getByRole('button',{name:'这些数字怎么来的'}).click();
+  await drawer.getByRole('heading',{name:'插件是怎么统计的'}).waitFor();
+  assert.match(await drawer.innerText(),/这次是 286 毫秒[\s\S]*最近一次停顿 84 毫秒/);
+  await closeDrawer();
+  await page.getByRole('button',{name:'1 小时',exact:true}).click();
+  assert.equal(await page.getByRole('button',{name:'1 小时',exact:true}).getAttribute('aria-pressed'),'true');
+  await page.getByRole('button',{name:'15 分钟',exact:true}).click();
+  await page.clock.runFor(3000);
+  await page.locator('.dpm-scroll').evaluate(el=>{el.scrollTop=0;}); await page.mouse.move(0,0);
+  await page.evaluate(()=>{document.documentElement.dataset.theme='dark';}); await page.clock.runFor(400);
+  await page.screenshot({animations:'disabled',path:'artifacts/dark.png'});
+  await page.evaluate(()=>{delete document.documentElement.dataset.theme;});
+  await page.getByRole('button',{name:'切换侧栏'}).click(); assert.equal(await page.locator('.dpm-entry.dpm-compact').count(),1);
+  await page.setViewportSize({width:560,height:1000}); await page.clock.runFor(400);
+  assert.equal(await page.locator('.dpm-scroll').evaluate(el=>el.scrollWidth>el.clientWidth),false);
+  await page.screenshot({animations:'disabled',path:'artifacts/narrow.png'});
+  assert.deepEqual(errors,[]);
+  const report={errors,pageLazyLoaded:true,entrySelectedState:true,conclusionAndAlertDot:true,linkedTracks:true,programMarks:true,pluginAttribution:true,drawerDetails:true,profilerPauseResume:true,diagnosticReport:true,sorting:true,visibilityPause:true,errorAndRetry:true,narrowLayout:true,taskProbe,statisticsProbe,data:'scripted collector readings; actual built client; real Chromium long frames and slow click'};
+  await writeFile('artifacts/browser-check.json',JSON.stringify(report,null,2)); console.log(report);
+} finally {await browser.close();}

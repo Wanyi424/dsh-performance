@@ -30,7 +30,7 @@ export class Sampler {
     child?.kill();
   }
   private start() {
-    if (process.platform !== 'win32') throw new Error('运行监控仅支持 Windows 本地桌面版。');
+    if (process.platform !== 'win32') throw new Error('DSH 性能监控仅支持 Windows 本地桌面版。');
     const child = spawn(this.executable, this.args, { windowsHide: true, shell: false, stdio: 'pipe' });
     this.child = child;
     const fail = (error: Error) => {

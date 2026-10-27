@@ -1,1 +1,1 @@
-{"name":"Performance","description":"Lightweight view of the CPU and memory DSH, the programs it starts and its plugins use, and whether its window stutters, with a plain verdict."}
+{"name":"DSH Performance Monitor","description":"Monitor CPU, memory, and UI responsiveness in DSH on Windows x64, inspect processes and sampled backend plugin resource usage, and copy diagnostic reports."}

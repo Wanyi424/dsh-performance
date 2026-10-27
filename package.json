@@ -1,7 +1,7 @@
 {
   "name": "dsh-performance",
-  "version": "0.7.1",
-  "description": "DSH 运行监控：侧栏实时读数与异常提醒；页面先给结论，再用 CPU、内存、界面响应三轨联动趋势和「谁在占用」一张表找到原因，插件按后台实时拆分，详情在侧边抽屉里；可复制诊断报告。",
+  "version": "0.7.2",
+  "description": "查看 DSH 的 CPU、内存和界面响应，分析进程占用与后台插件采样数据，并复制诊断报告。支持 Windows x64。",
   "type": "module",
   "license": "MIT",
   "author": "Wanyi424",

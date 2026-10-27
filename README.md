@@ -1,6 +1,8 @@
-# DSH 运行监控
+# DSH 性能监控
 
-Windows 桌面版 DeepSeek Harness 的轻量插件，用来回答五个问题：
+查看 DSH 的 CPU、内存和界面响应，分析进程占用与后台插件采样数据，并复制诊断报告。支持 Windows x64。
+
+用来回答五个问题：
 
 - 电脑慢，是不是 DSH 造成的？
 - DSH 的哪一部分、它启动的哪个程序在占用资源？
@@ -8,21 +10,38 @@ Windows 桌面版 DeepSeek Harness 的轻量插件，用来回答五个问题：
 - 长时间运行后，内存有没有一直上涨？
 - 哪个插件在占用 DSH 后台的 CPU 和内存？
 
+## 界面预览
+
+以下截图来自加载实际构建产物的隔离浏览器环境，资源读数为模拟场景。市场预览图由 [screenshots.json](screenshots.json) 声明。
+
+![性能趋势与资源占用](docs/images/overview.png)
+
+<details>
+<summary>后台插件详情与深色主题</summary>
+
+![后台插件占用详情](docs/images/plugin-details.png)
+
+![深色主题](docs/images/dark.png)
+
+</details>
+
 ## 安装
 
 通过 `engines.dsh` 声明兼容 DSH 0.2 系列（`^0.2.0-rc.2`），在 `0.2.0-rc.2` 上实测过。采集器为 Windows x64 程序，使用系统自带的 .NET Framework 4.x。
 
-在 DSH 左侧「插件」→「添加插件」中选择本地压缩包：
+从 [Releases](https://github.com/Wanyi424/dsh-performance/releases/latest) 下载预构建的 `.tgz` 安装包，无需解压。在 DSH 左侧「插件」→「添加插件」中选择下载的文件，例如：
 
 ```text
-D:\code\plugins\dsh\dsh-performance\dist\dsh-performance-0.7.1.tgz
+D:\Downloads\dsh-performance-0.7.2.tgz
 ```
 
 启用后完整退出并重启 DSH。不需要 API Key，不调用模型，也不与 Agent 交互。
 
+Release 同时提供固定文件名 `dsh-performance.tgz`，供插件市场下载当前版本；它与带版本号的安装包内容相同。
+
 ## 使用
 
-**侧栏入口**：侧栏底部的「运行监控」一行，右侧实时显示 CPU 和内存合计。需要留意时图标上亮一个圆点、数字变色，悬停可看原因。点击打开详情页；侧栏收起时只留图标。
+**侧栏入口**：侧栏底部的「DSH 性能监控」一行，右侧实时显示 CPU 和内存合计。需要留意时图标上亮一个圆点、数字变色，悬停可看原因。点击打开详情页；侧栏收起时只留图标。
 
 **详情页**是一栏，从上到下回答三个问题。顶栏可以切换时间范围（5 分钟、15 分钟、1 小时）、复制诊断报告、打开「这些数字怎么来的」。
 
@@ -57,7 +76,7 @@ D:\code\plugins\dsh\dsh-performance\dist\dsh-performance-0.7.1.tgz
 3. 后台启动的全部程序及其子孙进程，即「工具进程」，计入合计。
 
 以下不计入：
-- 采集器自身的占用，显示在「插件」分区「运行监控」一行的自带进程中，不计入 DSH 合计。
+- 采集器自身的占用，显示在「插件」分区「DSH 性能监控」一行的自带进程中，不计入 DSH 合计。
 - 父进程已经退出的程序，因为无法确认来源。
 - 树外的同名程序。
 
@@ -119,7 +138,7 @@ npm pack --pack-destination dist
 - `npm test`：单元测试。其中两项在 Node 进程内真实运行 V8 的 CPU 与堆分析器，验证以下几点：
   - 分段交接后，一个模拟插件的忙循环被归到该插件，并给出函数与行号；
   - 它保留的内存被计入，而只是打印过的对象不计入；
-  - 长时间没有读数后分析器停止，下一次读数时重新启动。
+  - 没有读数时仍按时间窗口分段记录；手动暂停后释放分析器，继续时重新启动。
 - `check:collector`：用一棵隔离的 Windows 进程树验证采集结果，包括：
   - 进程类型识别：主进程、界面渲染、GPU、Host，Host 启动的 Shell 及其子进程；
   - 树外同名程序被排除；

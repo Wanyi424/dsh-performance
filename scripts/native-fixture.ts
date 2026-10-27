@@ -31,7 +31,9 @@ try {
   assert.equal(a.cpu, null); assert.ok(a.memory! > 0);
   assert.ok(a.system && a.system.memoryTotal > a.system.memoryUsed && a.system.memoryUsed > 0, 'machine memory is read');
   assert.ok(a.processes.every(p => p.threads > 0), 'thread counts are read');
-  assert.equal(a.attribution!.error, null, 'the profiler runs in this Node'); assert.equal(a.attribution!.cpu, null, 'the first reading opens the first window');
+  assert.equal(a.attribution!.error, null, 'the profiler runs in this Node');
+  assert.equal(a.attribution!.state, 'running');
+  assert.deepEqual(Object.keys(a.attribution!.cpu!), ['plugin:stand-in-plugin', 'core', 'gc', 'other'], 'profiling began before the first reading, which closes its first window');
   await wait(2100); const second = await sampler.sample();
   const owners = second.attribution!.cpu!;
   assert.deepEqual(Object.keys(owners), ['plugin:stand-in-plugin', 'core', 'gc', 'other'], 'the next reading splits the main thread by owner');
@@ -42,7 +44,8 @@ try {
   await wait(16000);
   assert.throws(() => process.kill(second.collector!.pid, 0), 'idle collector exits');
   const resumed = await sampler.sample(); assert.notEqual(resumed.collector!.pid, second.collector!.pid); assert.equal(resumed.cpu, null);
-  assert.equal(resumed.attribution!.cpu, null, 'a window spanning the pause is not charged to one reading');
+  assert.equal(resumed.attribution!.state, 'running', 'the profiler remains active while the native collector is idle');
+  assert.deepEqual(Object.keys(resumed.attribution!.cpu!), Object.keys(owners), 'the profiler timer keeps rotating windows without native readings');
   sampler.dispose(); await wait(150); assert.throws(() => process.kill(resumed.collector!.pid, 0));
   await assert.rejects(sampler.sample(), /关闭/);
   console.log(JSON.stringify({ scope: 'main, renderer, GPU, Host and a tool shell with its child; same-named outside program excluded', kinds: [...new Set(a.processes.map(p => p.kind))],

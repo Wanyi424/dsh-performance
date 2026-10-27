@@ -19,11 +19,11 @@ function Entry({ controller: c, ctx, wide = true }: { controller: Controller; ct
   const verdict = useMemo(() => assess(s.points, s.sample, s.response.frames, Date.now()), [s]), alert = verdict?.level === 'warn' ? verdict : null;
   const status = s.error ? '读取失败' : s.sample ? `CPU ${cpu(s.sample.cpu)}，内存 ${bytes(s.sample.memory)}` : '正在读取';
   return <button type="button" className={wide ? 'dpm-entry' : 'dpm-entry dpm-compact'} data-state={s.error ? 'error' : alert ? 'warn' : undefined}
-    aria-current={active ? 'page' : undefined} aria-label={`运行监控，${status}${alert ? `，${alert.title}` : ''}`}
-    title={alert ? `${alert.title}：${alert.detail}` : wide ? undefined : `运行监控 · ${status}`} onClick={() => ctx.layout.selectPanel(PANEL)}>
+    aria-current={active ? 'page' : undefined} aria-label={`DSH 性能监控，${status}${alert ? `，${alert.title}` : ''}`}
+    title={alert ? `${alert.title}：${alert.detail}` : wide ? undefined : `DSH 性能监控 · ${status}`} onClick={() => ctx.layout.selectPanel(PANEL)}>
     <span className="dpm-entry-icon"><Gauge size={wide ? 16 : 18} />{(s.error || alert) && <i className="dpm-entry-dot" />}</span>
     {wide && <>
-      <span className="dpm-entry-label">运行监控</span>
+      <span className="dpm-entry-label">DSH 性能监控</span>
       <span className="dpm-entry-value" aria-hidden="true">{s.error ? '读取失败' : s.sample ? `${cpu(s.sample.cpu)} · ${bytes(s.sample.memory)}` : '…'}</span>
     </>}
   </button>;
@@ -40,7 +40,7 @@ function LazyPage({ controller }: { controller: Controller }) {
   }, [attempt]);
   if (Page) return <Page controller={controller} />;
   // A local chunk usually arrives within a frame or two; only show the hint when it does not.
-  return <div style={hint} role="status">{failed ? <>运行监控页面加载失败<button onClick={() => { setFailed(false); setAttempt(n => n + 1); }}>重试</button></> : slow ? '正在打开运行监控…' : null}</div>;
+  return <div style={hint} role="status">{failed ? <>DSH 性能监控页面加载失败<button onClick={() => { setFailed(false); setAttempt(n => n + 1); }}>重试</button></> : slow ? '正在打开 DSH 性能监控…' : null}</div>;
 }
 
 export const inject = ['slots', 'locale', 'layout'];
@@ -51,7 +51,7 @@ export function apply(ctx: ClientContext) {
     const style = document.createElement('style'); style.textContent = css; document.head.append(style);
     return () => style.remove();
   }, 'performance: sidebar styles');
-  ctx.effect(() => ctx.locale.register('performance', { zh: { title: '运行监控' }, en: { title: 'Performance' } }), 'performance: locale');
+  ctx.effect(() => ctx.locale.register('performance', { zh: { title: 'DSH 性能监控' }, en: { title: 'DSH Performance Monitor' } }), 'performance: locale');
   ctx.slots.inject('main', () => ctx.slots.register({ name: 'main', key: PANEL, locale: 'performance' }, () => <LazyPage controller={controller} />));
   ctx.slots.inject('sidebar.footer.action', () => ctx.slots.register({ name: 'sidebar.footer.action', id: PANEL, order: 50 },
     (props: { wide: boolean }) => <Entry {...props} controller={controller} ctx={ctx} />));
