@@ -1,6 +1,6 @@
 # DSH 性能监控
 
-查看 DSH 的 CPU、内存和界面响应，分析进程占用与后台插件采样数据，并复制诊断报告。支持 Windows x64。
+小而美？看清 DSH 的 CPU、内存与卡顿：按插件、终端、MCP 拆分占用，对照卡顿时刻，复制诊断报告。仅限 Windows x64。
 
 用来回答五个问题：
 
@@ -32,7 +32,7 @@
 从 [Releases](https://github.com/Wanyi424/dsh-performance/releases/latest) 下载预构建的 `.tgz` 安装包，无需解压。在 DSH 左侧「插件」→「添加插件」中选择下载的文件，例如：
 
 ```text
-D:\Downloads\dsh-performance-0.7.2.tgz
+D:\Downloads\dsh-performance-0.7.3.tgz
 ```
 
 启用后完整退出并重启 DSH。不需要 API Key，不调用模型，也不与 Agent 交互。

@@ -1,1 +1,1 @@
-{"name":"DSH Performance Monitor","description":"Monitor CPU, memory, and UI responsiveness in DSH on Windows x64, inspect processes and sampled backend plugin resource usage, and copy diagnostic reports."}
+{"meta":{"title":"DSH Performance Monitor","description":"Lean and light? See DSH CPU, memory and UI stalls, broken down by plugin, terminal and MCP server, matched against stall times, and copy a diagnostic report. Windows x64 only."}}

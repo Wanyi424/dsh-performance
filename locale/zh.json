@@ -1,1 +1,1 @@
-{"name":"DSH 性能监控","description":"查看 DSH 的 CPU、内存和界面响应，分析进程占用与后台插件采样数据，并复制诊断报告。支持 Windows x64。"}
+{"meta":{"title":"DSH 性能监控","description":"小而美？看清 DSH 的 CPU、内存与卡顿：按插件、终端、MCP 拆分占用，对照卡顿时刻，复制诊断报告。仅限 Windows x64。"}}
